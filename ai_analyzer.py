@@ -21,6 +21,7 @@ from ai_prompts import (
     SCORING_PROMPT,
     SUMMARY_PROMPT,
 )
+from vector_category_store import VectorCategoryStore
 
 
 BEIJING_TZ = pytz.timezone("Asia/Shanghai")
@@ -237,6 +238,8 @@ class AIAnalyzer:
             output_root=self.config.output_root,
             cache_ttl_hours=self.config.cache_ttl_hours,
         )
+        category_path = self.repository.output_root / "category_store.json"
+        self.category_store = VectorCategoryStore(category_path)
         self.ollama_client = OllamaClient(
             base_url=self.config.ollama_url,
             model=self.config.model,
@@ -366,15 +369,38 @@ class AIAnalyzer:
 
     def classify_theme(self, event: Dict[str, Any]) -> Dict[str, str]:
         title = event.get("title", "")
+        context = self._compose_event_context(event)
+        vector_hit = self.category_store.lookup(title, context)
+        if vector_hit:
+            return {
+                "theme": vector_hit["theme"],
+                "subcategory": vector_hit["subcategory"],
+                "classification_source": "vector_store",
+                "similarity": vector_hit.get("similarity"),
+            }
         if self.ollama_client.is_available():
             try:
-                prompt = CLASSIFICATION_PROMPT.format(event_summary=title)
+                prompt = CLASSIFICATION_PROMPT.format(
+                    event_summary=context or title
+                )
                 response = self.ollama_client.generate(prompt)
                 data = json.loads(response)
                 if "theme" in data:
+                    theme = self._normalize_category(data.get("theme", "general"))
+                    subcategory = self._normalize_category(
+                        data.get("subcategory", "overview")
+                    )
+                    explanation = data.get("explanation") or title
+                    self.category_store.record_classification(
+                        theme,
+                        subcategory,
+                        explanation,
+                        source_event=title,
+                    )
                     return {
-                        "theme": data.get("theme", "general"),
-                        "subcategory": data.get("subcategory", "overview"),
+                        "theme": theme,
+                        "subcategory": subcategory,
+                        "classification_source": "llm",
                     }
             except Exception:
                 pass
@@ -394,7 +420,11 @@ class AIAnalyzer:
         }
         for theme, words in keywords.items():
             if any(word in title_lower for word in words):
-                return {"theme": theme, "subcategory": words[0]}
+                return {
+                    "theme": theme,
+                    "subcategory": words[0],
+                    "classification_source": "keyword",
+                }
         return {"theme": "general", "subcategory": "overview"}
 
     def score_importance(self, event: Dict[str, Any]) -> Dict[str, float]:
@@ -476,6 +506,26 @@ class AIAnalyzer:
     def _hash_payload(self, payload: List[Dict[str, Any]]) -> str:
         serialized = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
         return hashlib.md5(serialized).hexdigest()
+
+    def _compose_event_context(self, event: Dict[str, Any]) -> str:
+        parts: List[str] = []
+        title = event.get("title")
+        if title:
+            parts.append(title)
+        rationale = event.get("rationale")
+        if rationale:
+            parts.append(rationale)
+        articles = event.get("articles") or []
+        if articles:
+            snippets = [article.get("title", "") for article in articles[:3]]
+            snippets = [snippet for snippet in snippets if snippet]
+            if snippets:
+                parts.append("; ".join(snippets))
+        return " | ".join(parts)
+
+    def _normalize_category(self, value: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_")
+        return slug or "general"
 
     def _normalize(self, text: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", text.lower())

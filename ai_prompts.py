@@ -29,12 +29,15 @@ You are categorizing a single crypto news event for TrendRadar. Review the
 event summary, then output JSON with keys `theme`, `subcategory`, and
 `explanation`.
 
-Themes (pick the closest match, lowercase): regulation, market, technology,
-defi, nft, personnel, security, institutional, macro, ecosystem.
+Themes: regulation, market, technology, defi, nft, personnel, security,
+institutional, macro, ecosystem. If **none** of these fit, you may introduce a
+new lowercase theme (snake_case) but only when necessary.
 
 Guidance:
 - `subcategory` should be a short keyword (e.g. "stablecoins", "venture_funding").
 - `explanation` is one brief sentence linking the event to the chosen theme.
+- If you create a new theme, justify why existing options do not apply and
+  still provide a concise `subcategory` describing the focus.
 
 Event summary: {event_summary}
 """
