@@ -403,6 +403,7 @@ class AIAnalyzer:
                         "classification_source": "llm",
                     }
             except Exception:
+                # Fall back to keyword-based classification if LLM fails
                 pass
 
         title_lower = title.lower()

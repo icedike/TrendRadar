@@ -13,7 +13,7 @@ payload and output **only** JSON with an `events` array. For each event, include
 - confidence: value between 0 and 1 describing clustering certainty
 
 Rules:
-1. If the payload is empty, return {"events": []}.
+1. If the payload is empty, return {{"events": []}}.
 2. Do not invent facts—derive titles and rationales from supplied content.
 3. Prefer fewer, more meaningful events; singletons are allowed if unique.
 
@@ -55,8 +55,7 @@ SCORING_PROMPT = """
 Assign an importance score for crypto investors to the event below. Consider the
 number of unique sources, market impact, regulatory weight, and time-sensitivity.
 Return strict JSON formatted as {{"importance": x.x, "confidence": y.y}}, where
-importance ranges from 1-10 and confidence from 0-1. Briefly justify the score in
-a `justification` string (<= 20 words) describing the primary driver.
+importance ranges from 1-10 and confidence from 0-1.
 
 Event context:
 {event_context}
