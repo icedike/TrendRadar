@@ -4,3 +4,8 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Output files (exclude AI analysis results but keep category_store.json)
+output/20*/
+output/**/ai_analysis/
+!output/category_store.json

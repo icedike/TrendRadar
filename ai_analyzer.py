@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -68,22 +69,22 @@ class OllamaClient:
         return response.json()
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
-    def generate(self, prompt: str) -> str:
-        response = self._post(
-            "/api/generate",
-            {"model": self.model, "prompt": prompt, "stream": False},
-        )
+    def generate(self, prompt: str, format: str = None) -> str:
+        payload = {"model": self.model, "prompt": prompt, "stream": False}
+        if format:
+            payload["format"] = format
+        response = self._post("/api/generate", payload)
         content = response.get("response") or response.get("message")
         if not content:
             raise OllamaClientError("Empty response from Ollama")
         return content
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
-    def chat(self, messages: List[Dict[str, str]]) -> str:
-        response = self._post(
-            "/api/chat",
-            {"model": self.model, "messages": messages, "stream": False},
-        )
+    def chat(self, messages: List[Dict[str, str]], format: str = None) -> str:
+        payload = {"model": self.model, "messages": messages, "stream": False}
+        if format:
+            payload["format"] = format
+        response = self._post("/api/chat", payload)
         message = response.get("message", {})
         content = message.get("content")
         if not content:
@@ -127,7 +128,8 @@ class AIResultRepository:
             return {"entries": {}}
         try:
             return orjson.loads(cache_file.read_bytes())
-        except Exception:
+        except Exception as e:
+            print(f"⚠️  [AIResultRepository] 載入快取失敗 ({cache_file}): {type(e).__name__}: {e}")
             return {"entries": {}}
 
     def _save_cache(self, cache: Dict[str, Any], date: Optional[datetime] = None) -> None:
@@ -147,7 +149,8 @@ class AIResultRepository:
         latest = json_files[-1]
         try:
             return orjson.loads(latest.read_bytes())
-        except Exception:
+        except Exception as e:
+            print(f"⚠️  [AIResultRepository] 載入分析結果失敗 ({latest}): {type(e).__name__}: {e}")
             return None
 
     def _is_entry_valid(self, entry: Dict[str, Any]) -> bool:
@@ -175,7 +178,8 @@ class AIResultRepository:
             data = orjson.loads(file_path.read_bytes())
             data.setdefault("ai_status", "cached")
             return data
-        except Exception:
+        except Exception as e:
+            print(f"⚠️  [AIResultRepository] 從快取讀取分析結果失敗 ({file_path}): {type(e).__name__}: {e}")
             return None
 
     def put_cache_entry(
@@ -319,18 +323,75 @@ class AIAnalyzer:
         if not articles:
             return []
 
+        # If article count exceeds batch size, use batch processing
+        if len(articles) > self.config.batch_size and self.ollama_client.is_available():
+            print(f"ℹ️  [cluster_events] 處理 {len(articles)} 篇文章，使用批次處理（批次大小: {self.config.batch_size}）")
+            return self._cluster_events_batched(articles)
+
+        # For smaller datasets, process all at once
         if self.ollama_client.is_available():
-            try:
-                prompt = CLUSTER_PROMPT_TEMPLATE.format(
-                    payload=json.dumps(articles, ensure_ascii=False)
-                )
-                response = self.ollama_client.generate(prompt)
-                parsed = json.loads(response)
-                events = parsed.get("events", [])
-                return self._merge_events_with_articles(events, articles)
-            except Exception:
-                pass
+            prompt = CLUSTER_PROMPT_TEMPLATE.format(
+                payload=json.dumps(articles, ensure_ascii=False)
+            )
+            # Retry up to 3 times for JSON parsing errors
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    parsed = json.loads(response)
+                    events = parsed.get("events", [])
+                    return self._merge_events_with_articles(events, articles)
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [cluster_events] LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print("❌ [cluster_events] JSON 解析失敗 3 次，降級到本地聚類")
+                        break
+                    # Wait before retry (exponential backoff: 1s, 2s)
+                    time.sleep(1 * (attempt + 1))
+                except Exception as e:
+                    print(f"❌ [cluster_events] 聚類過程發生意外錯誤: {type(e).__name__}: {e}")
+                    break
         return self._cluster_locally(articles)
+
+    def _cluster_events_batched(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Cluster articles in batches to avoid token limits."""
+        batch_size = self.config.batch_size
+        all_events: List[Dict[str, Any]] = []
+
+        # Process articles in batches
+        for i in range(0, len(articles), batch_size):
+            batch = articles[i:i + batch_size]
+            print(f"ℹ️  [cluster_events] 處理批次 {i // batch_size + 1}/{(len(articles) + batch_size - 1) // batch_size}")
+
+            prompt = CLUSTER_PROMPT_TEMPLATE.format(
+                payload=json.dumps(batch, ensure_ascii=False)
+            )
+
+            # Retry up to 3 times for JSON parsing errors
+            batch_events = None
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    parsed = json.loads(response)
+                    events = parsed.get("events", [])
+                    batch_events = self._merge_events_with_articles(events, batch)
+                    break
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [cluster_events_batched] 批次 {i // batch_size + 1} LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print(f"❌ [cluster_events_batched] 批次 {i // batch_size + 1} JSON 解析失敗，使用本地聚類")
+                        batch_events = self._cluster_locally(batch)
+                        break
+                    time.sleep(1 * (attempt + 1))
+                except Exception as e:
+                    print(f"❌ [cluster_events_batched] 批次 {i // batch_size + 1} 發生錯誤: {type(e).__name__}: {e}")
+                    batch_events = self._cluster_locally(batch)
+                    break
+
+            if batch_events:
+                all_events.extend(batch_events)
+
+        # Merge similar events across batches
+        return self._merge_cross_batch_events(all_events)
 
     def _merge_events_with_articles(
         self, events: List[Dict[str, Any]], articles: List[Dict[str, Any]]
@@ -379,32 +440,40 @@ class AIAnalyzer:
                 "similarity": vector_hit.get("similarity"),
             }
         if self.ollama_client.is_available():
-            try:
-                prompt = CLASSIFICATION_PROMPT.format(
-                    event_summary=context or title
-                )
-                response = self.ollama_client.generate(prompt)
-                data = json.loads(response)
-                if "theme" in data:
-                    theme = self._normalize_category(data.get("theme", "general"))
-                    subcategory = self._normalize_category(
-                        data.get("subcategory", "overview")
-                    )
-                    explanation = data.get("explanation") or title
-                    self.category_store.record_classification(
-                        theme,
-                        subcategory,
-                        explanation,
-                        source_event=title,
-                    )
-                    return {
-                        "theme": theme,
-                        "subcategory": subcategory,
-                        "classification_source": "llm",
-                    }
-            except Exception:
-                # Fall back to keyword-based classification if LLM fails
-                pass
+            prompt = CLASSIFICATION_PROMPT.format(
+                event_summary=context or title
+            )
+            # Retry up to 3 times for JSON parsing errors
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    data = json.loads(response)
+                    if "theme" in data:
+                        theme = self._normalize_category(data.get("theme", "general"))
+                        subcategory = self._normalize_category(
+                            data.get("subcategory", "overview")
+                        )
+                        explanation = data.get("explanation") or title
+                        self.category_store.record_classification(
+                            theme,
+                            subcategory,
+                            explanation,
+                            source_event=title,
+                        )
+                        return {
+                            "theme": theme,
+                            "subcategory": subcategory,
+                            "classification_source": "llm",
+                        }
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [classify_theme] LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print("❌ [classify_theme] JSON 解析失敗 3 次，降級到關鍵字分類")
+                        break
+                    time.sleep(1 * (attempt + 1))
+                except Exception as e:
+                    print(f"❌ [classify_theme] 分類過程發生意外錯誤: {type(e).__name__}: {e}")
+                    break
 
         title_lower = title.lower()
         keywords = {
@@ -432,18 +501,31 @@ class AIAnalyzer:
         articles = event.get("articles", [])
         context = "\n".join(article["title"] for article in articles[:5])
         if self.ollama_client.is_available() and context:
-            try:
-                prompt = SCORING_PROMPT.format(event_context=context)
-                response = self.ollama_client.generate(prompt)
-                data = json.loads(response)
-                importance = float(data.get("importance", 0))
-                confidence = float(data.get("confidence", 0.5))
-                return {
-                    "importance": max(1.0, min(10.0, round(importance, 2))),
-                    "confidence": max(0.0, min(0.99, round(confidence, 2))),
-                }
-            except Exception:
-                pass
+            prompt = SCORING_PROMPT.format(event_context=context)
+            # Retry up to 3 times for JSON parsing errors
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    data = json.loads(response)
+                    importance = float(data.get("importance", 0))
+                    confidence = float(data.get("confidence", 0.5))
+                    return {
+                        "importance": max(1.0, min(10.0, round(importance, 2))),
+                        "confidence": max(0.0, min(0.99, round(confidence, 2))),
+                    }
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [score_importance] LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print("❌ [score_importance] JSON 解析失敗 3 次，降級到啟發式評分")
+                        break
+                    time.sleep(1 * (attempt + 1))
+                except (ValueError, KeyError) as e:
+                    print(f"⚠️  [score_importance] 數據格式錯誤: {type(e).__name__}: {e}")
+                    break
+                except Exception as e:
+                    print(f"❌ [score_importance] 評分過程發生意外錯誤: {type(e).__name__}: {e}")
+                    break
+        # Heuristic fallback scoring
         count_score = min(len(articles) / 3, 1)
         ranks = [article.get("source_rank") for article in articles if article.get("source_rank")]
         rank_score = 0
@@ -469,11 +551,21 @@ class AIAnalyzer:
         snippets = [article["title"] for article in articles[:3]]
         context = "; ".join(snippets)
         if self.ollama_client.is_available():
-            try:
-                prompt = SUMMARY_PROMPT.format(event_context=context)
-                return self.ollama_client.generate(prompt)
-            except Exception:
-                pass
+            prompt = SUMMARY_PROMPT.format(event_context=context)
+            # Retry up to 2 times for summary generation
+            for attempt in range(2):
+                try:
+                    # Note: Do not pass format="json" here; summary is expected as plain text.
+                    summary = self.ollama_client.generate(prompt)
+                    # Validate summary is not empty and reasonable length
+                    if summary and len(summary.strip()) > 10:
+                        return summary.strip()
+                    print(f"⚠️  [generate_summary] LLM 返回空或過短的摘要 (嘗試 {attempt + 1}/2)")
+                except Exception as e:
+                    print(f"⚠️  [generate_summary] 摘要生成失敗 (嘗試 {attempt + 1}/2): {type(e).__name__}: {e}")
+                if attempt < 1:  # Wait before retry
+                    time.sleep(1)
+            print("❌ [generate_summary] 摘要生成失敗，使用截斷的上下文")
         return context[:240]
 
     def _build_result(
@@ -523,6 +615,38 @@ class AIAnalyzer:
             if snippets:
                 parts.append("; ".join(snippets))
         return " | ".join(parts)
+
+    def _merge_cross_batch_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Merge similar events that may have been split across batches."""
+        if not events:
+            return []
+
+        # Group events by normalized title
+        title_groups: Dict[str, List[Dict[str, Any]]] = {}
+        for event in events:
+            normalized = self._normalize(event.get("title", ""))
+            if normalized not in title_groups:
+                title_groups[normalized] = []
+            title_groups[normalized].append(event)
+
+        # Merge grouped events
+        merged_events = []
+        for group in title_groups.values():
+            if len(group) == 1:
+                merged_events.append(group[0])
+            else:
+                # Merge multiple events with same normalized title
+                merged = {
+                    "event_id": group[0]["event_id"],
+                    "title": group[0]["title"],
+                    "articles": [],
+                    "rationale": group[0].get("rationale", "")
+                }
+                for event in group:
+                    merged["articles"].extend(event.get("articles", []))
+                merged_events.append(merged)
+
+        return merged_events
 
     def _normalize_category(self, value: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_")

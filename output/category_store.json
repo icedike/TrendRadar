@@ -1,0 +1,101 @@
+{
+  "vector_version": "v1",
+  "categories": [
+    {
+      "theme": "regulation",
+      "subcategory": "policy",
+      "description": "Global regulatory actions, compliance policies, SEC/CFTC statements.",
+      "created_at": "2025-11-18T17:03:42.119978Z",
+      "updated_at": "2025-11-18T17:03:42.120010Z",
+      "source_event": ""
+    },
+    {
+      "theme": "market",
+      "subcategory": "price_action",
+      "description": "Market structure, ETFs, price swings, liquidity and trading volume.",
+      "created_at": "2025-11-18T17:03:42.120019Z",
+      "updated_at": "2025-11-18T17:03:42.120022Z",
+      "source_event": ""
+    },
+    {
+      "theme": "technology",
+      "subcategory": "infrastructure",
+      "description": "Protocol upgrades, client releases, scalability breakthroughs, layer-2 updates.",
+      "created_at": "2025-11-18T17:03:42.120027Z",
+      "updated_at": "2025-11-18T17:03:42.120029Z",
+      "source_event": ""
+    },
+    {
+      "theme": "defi",
+      "subcategory": "liquidity",
+      "description": "Decentralized exchanges, liquidity pools, staking and yield mechanics.",
+      "created_at": "2025-11-18T17:03:42.120033Z",
+      "updated_at": "2025-11-18T17:03:42.120035Z",
+      "source_event": ""
+    },
+    {
+      "theme": "nft",
+      "subcategory": "collectibles",
+      "description": "NFT launches, gaming integrations, metaverse partnerships.",
+      "created_at": "2025-11-18T17:03:42.120039Z",
+      "updated_at": "2025-11-18T17:03:42.120041Z",
+      "source_event": ""
+    },
+    {
+      "theme": "personnel",
+      "subcategory": "leadership",
+      "description": "Executive moves, hires, resignations and governance appointments.",
+      "created_at": "2025-11-18T17:03:42.120045Z",
+      "updated_at": "2025-11-18T17:03:42.120047Z",
+      "source_event": ""
+    },
+    {
+      "theme": "security",
+      "subcategory": "exploit",
+      "description": "Hacks, exploits, security disclosures, chain halts.",
+      "created_at": "2025-11-18T17:03:42.120051Z",
+      "updated_at": "2025-11-18T17:03:42.120053Z",
+      "source_event": ""
+    },
+    {
+      "theme": "institutional",
+      "subcategory": "adoption",
+      "description": "Banks, asset managers, corporates adopting crypto services.",
+      "created_at": "2025-11-18T17:03:42.120060Z",
+      "updated_at": "2025-11-18T17:03:42.120064Z",
+      "source_event": ""
+    },
+    {
+      "theme": "macro",
+      "subcategory": "economy",
+      "description": "Inflation, interest rates, GDP, macroeconomic indicators influencing crypto.",
+      "created_at": "2025-11-18T17:03:42.120068Z",
+      "updated_at": "2025-11-18T17:03:42.120070Z",
+      "source_event": ""
+    },
+    {
+      "theme": "ecosystem",
+      "subcategory": "community",
+      "description": "Partnerships, grants, developer or community ecosystem moves.",
+      "created_at": "2025-11-18T17:03:42.120073Z",
+      "updated_at": "2025-11-18T17:03:42.120076Z",
+      "source_event": ""
+    },
+    {
+      "theme": "technology",
+      "subcategory": "innovation",
+      "description": "Tech advancement",
+      "created_at": "2025-11-18T17:11:20.250920Z",
+      "updated_at": "2025-11-18T18:24:10.824796Z",
+      "source_event": "New blockchain technology breakthrough"
+    },
+    {
+      "theme": "regulation",
+      "subcategory": "sec_approval",
+      "description": "SEC approves Bitcoin ETF application",
+      "created_at": "2025-11-18T17:23:48.433396Z",
+      "updated_at": "2025-11-18T18:24:10.823965Z",
+      "source_event": "SEC 批准比特幣 ETF"
+    }
+  ]
+}
