@@ -4,6 +4,7 @@
 提供txt格式新闻数据和YAML配置文件的解析功能。
 """
 
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -37,8 +38,41 @@ class ParserService:
         # 初始化缓存服务
         self.cache = get_cache()
         self.ai_repository = AIResultRepository(
-            output_root=str(self.project_root / "output")
+            output_root=str(self._resolve_output_root())
         )
+
+    def _resolve_output_root(self) -> Path:
+        """Resolve the AI analysis output directory from config or env."""
+
+        env_output_root = (
+            os.environ.get("AI_ANALYSIS_OUTPUT_ROOT")
+            or os.environ.get("AI_OUTPUT_ROOT")
+            or ""
+        ).strip()
+
+        if env_output_root:
+            output_root = Path(env_output_root)
+        else:
+            output_root = Path("output")
+            config_data = {}
+            try:
+                config_data = self.parse_yaml_config()
+            except FileParseError:
+                # 配置文件缺失时回退到默认 output 目录
+                config_data = {}
+
+            ai_section = config_data.get("ai_analysis") or {}
+            configured_root = (
+                ai_section.get("output_root")
+                or config_data.get("AI_ANALYSIS", {}).get("OUTPUT_ROOT")
+            )
+            if configured_root:
+                output_root = Path(configured_root)
+
+        if not output_root.is_absolute():
+            output_root = (self.project_root / output_root).resolve()
+
+        return output_root
 
     @staticmethod
     def clean_title(title: str) -> str:
