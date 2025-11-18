@@ -101,6 +101,45 @@ class DataService:
 
         return result
 
+    def get_ai_analysis(self, date: Optional[datetime] = None) -> Dict:
+        """获取最新的 AI 分析结果"""
+        return self.parser.read_ai_analysis(date)
+
+    def get_top_ai_events(self, top_n: int = 5) -> Dict:
+        """按重要性获取 Top N AI 事件"""
+        analysis = self.get_ai_analysis()
+        events = analysis.get("events", [])
+        sorted_events = sorted(
+            events,
+            key=lambda event: event.get("importance", 0),
+            reverse=True,
+        )
+        return {
+            "events": sorted_events[:top_n],
+            "total_events": len(events),
+            "ai_status": analysis.get("ai_status"),
+            "generated_at": analysis.get("generated_at"),
+        }
+
+    def search_ai_events_by_theme(self, theme: str) -> Dict:
+        """按主题搜索 AI 事件"""
+        analysis = self.get_ai_analysis()
+        events = analysis.get("events", [])
+        theme_lower = theme.lower()
+        matched = [
+            event
+            for event in events
+            if theme_lower in (event.get("theme", "").lower() or "")
+            or theme_lower in (event.get("subcategory", "").lower() or "")
+        ]
+        return {
+            "events": matched,
+            "requested_theme": theme,
+            "ai_status": analysis.get("ai_status"),
+            "generated_at": analysis.get("generated_at"),
+            "total_events": len(events),
+        }
+
     def get_news_by_date(
         self,
         target_date: datetime,

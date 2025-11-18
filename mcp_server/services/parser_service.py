@@ -11,6 +11,8 @@ from datetime import datetime
 
 import yaml
 
+from ai_analyzer import AIResultRepository
+
 from ..utils.errors import FileParseError, DataNotFoundError
 from .cache_service import get_cache
 
@@ -34,6 +36,9 @@ class ParserService:
 
         # 初始化缓存服务
         self.cache = get_cache()
+        self.ai_repository = AIResultRepository(
+            output_root=str(self.project_root / "output")
+        )
 
     @staticmethod
     def clean_title(title: str) -> str:
@@ -286,6 +291,13 @@ class ParserService:
             return config_data
         except Exception as e:
             raise FileParseError(str(config_path), str(e))
+
+    def read_ai_analysis(self, date: Optional[datetime] = None) -> Dict:
+        """读取 AI 分析结果"""
+        result = self.ai_repository.load_latest(date)
+        if not result:
+            raise DataNotFoundError("output/ai_analysis", "未找到AI分析结果")
+        return result
 
     def parse_frequency_words(self, words_file: str = None) -> List[Dict]:
         """

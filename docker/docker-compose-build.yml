@@ -16,6 +16,12 @@ services:
       - ENABLE_CRAWLER=${ENABLE_CRAWLER:-}
       - ENABLE_NOTIFICATION=${ENABLE_NOTIFICATION:-}
       - REPORT_MODE=${REPORT_MODE:-}
+      # AI 配置
+      - AI_ANALYSIS_ENABLED=${AI_ANALYSIS_ENABLED:-false}
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+      - AI_BATCH_SIZE=${AI_BATCH_SIZE:-20}
+      - AI_CACHE_TTL_HOURS=${AI_CACHE_TTL_HOURS:-24}
       # 推送时间窗口
       - PUSH_WINDOW_ENABLED=${PUSH_WINDOW_ENABLED:-}
       - PUSH_WINDOW_START=${PUSH_WINDOW_START:-}
@@ -42,3 +48,19 @@ services:
       - CRON_SCHEDULE=${CRON_SCHEDULE:-*/5 * * * *}
       - RUN_MODE=${RUN_MODE:-cron}
       - IMMEDIATE_RUN=${IMMEDIATE_RUN:-true}
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: trend-radar-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    ports:
+      - "11434:11434"
+
+volumes:
+  ollama-data:
