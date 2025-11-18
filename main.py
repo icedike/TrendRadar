@@ -169,6 +169,15 @@ def load_config():
             "RANK_WEIGHT": config_data["weight"]["rank_weight"],
             "FREQUENCY_WEIGHT": config_data["weight"]["frequency_weight"],
             "HOTNESS_WEIGHT": config_data["weight"]["hotness_weight"],
+            # AI 增强权重配置
+            "ai_enhanced": config_data["weight"].get("ai_enhanced", {
+                "enabled": False,
+                "rank_weight": 0.3,
+                "frequency_weight": 0.25,
+                "hotness_weight": 0.05,
+                "importance_weight": 0.3,
+                "confidence_weight": 0.1,
+            }),
         },
         "PLATFORMS": config_data["platforms"],
         "RSS_FEEDS": rss_feeds,
@@ -1074,23 +1083,26 @@ def detect_latest_new_titles(current_platform_ids: Optional[List[str]] = None) -
 def calculate_news_weight(
     title_data: Dict, rank_threshold: int = CONFIG["RANK_THRESHOLD"]
 ) -> float:
-    """计算新闻权重，用于排序"""
+    """计算新闻权重，用于排序（支持AI增强模式）"""
     ranks = title_data.get("ranks", [])
     if not ranks:
         return 0.0
 
-    count = title_data.get("count", len(ranks))
+    # 检查是否有AI评分
+    has_ai_score = title_data.get("has_ai_score", False)
     weight_config = CONFIG["WEIGHT_CONFIG"]
 
+    # 计算基础权重
     # 排名权重：Σ(11 - min(rank, 10)) / 出现次数
     rank_scores = []
     for rank in ranks:
         score = 11 - min(rank, 10)
         rank_scores.append(score)
-
     rank_weight = sum(rank_scores) / len(ranks) if ranks else 0
 
     # 频次权重：min(出现次数, 10) × 10
+    # 对于事件数据，frequency 已经在 cluster_and_transform_data 中计算好了
+    count = title_data.get("frequency", title_data.get("count", len(ranks)))
     frequency_weight = min(count, 10) * 10
 
     # 热度加成：高排名次数 / 总出现次数 × 100
@@ -1098,11 +1110,38 @@ def calculate_news_weight(
     hotness_ratio = high_rank_count / len(ranks) if ranks else 0
     hotness_weight = hotness_ratio * 100
 
-    total_weight = (
-        rank_weight * weight_config["RANK_WEIGHT"]
-        + frequency_weight * weight_config["FREQUENCY_WEIGHT"]
-        + hotness_weight * weight_config["HOTNESS_WEIGHT"]
+    # 判断使用哪种评分模式
+    ai_enhanced_config = weight_config.get("ai_enhanced", {})
+    use_ai_mode = (
+        has_ai_score
+        and ai_enhanced_config.get("enabled", False)
+        and "importance" in title_data
+        and "confidence" in title_data
     )
+
+    if use_ai_mode:
+        # AI 增强模式
+        importance = title_data.get("importance", 5.0)  # 1-10
+        confidence = title_data.get("confidence", 0.5)  # 0-1
+
+        # 归一化到 0-100 范围
+        importance_weight = importance * 10  # 1-10 → 10-100
+        confidence_weight = confidence * 100  # 0-1 → 0-100
+
+        total_weight = (
+            rank_weight * ai_enhanced_config["rank_weight"]
+            + frequency_weight * ai_enhanced_config["frequency_weight"]
+            + hotness_weight * ai_enhanced_config["hotness_weight"]
+            + importance_weight * ai_enhanced_config["importance_weight"]
+            + confidence_weight * ai_enhanced_config["confidence_weight"]
+        )
+    else:
+        # 传统模式（兼容无AI场景）
+        total_weight = (
+            rank_weight * weight_config["RANK_WEIGHT"]
+            + frequency_weight * weight_config["FREQUENCY_WEIGHT"]
+            + hotness_weight * weight_config["HOTNESS_WEIGHT"]
+        )
 
     return total_weight
 
@@ -1292,8 +1331,15 @@ def count_word_frequency(
         if source_id not in processed_titles:
             processed_titles[source_id] = {}
 
-        for title, title_data in titles_data.items():
-            if title in processed_titles.get(source_id, {}):
+        for key, item_data in titles_data.items():
+            # 兼容两种数据结构：
+            # 1. 事件数据（经过AI聚类）：key=event_id, item_data包含event_title
+            # 2. 传统标题数据：key=title, item_data直接是标题数据
+            is_event_data = "event_title" in item_data
+            title = item_data.get("event_title", key) if is_event_data else key
+            title_data = item_data
+
+            if key in processed_titles.get(source_id, {}):
                 continue
 
             # 使用统一的匹配逻辑
@@ -4787,6 +4833,21 @@ class NewsAnalyzer:
                     f"current模式：使用过滤后的历史数据，包含平台：{list(all_results.keys())}"
                 )
 
+                # AI 数据转换：将标题字典转换为事件字典
+                if self.ai_enabled and self.ai_analyzer:
+                    print("🔄 使用 AI 进行事件聚类和数据转换...")
+                    event_based_results, has_ai_scores = self.ai_analyzer.cluster_and_transform_data(
+                        all_results, historical_title_info
+                    )
+                    if has_ai_scores:
+                        print(f"✅ AI 聚类完成，识别出 {sum(len(events) for events in event_based_results.values())} 个事件")
+                        all_results = event_based_results
+                    else:
+                        print("⚠️  AI 不可用，使用标题归一化降级模式")
+                        all_results = event_based_results  # 仍然使用降级聚类结果
+                else:
+                    print("ℹ️  AI 功能未启用，使用原始标题统计")
+
                 ai_analysis = self._run_ai_pipeline(all_results, historical_title_info)
                 stats, html_file = self._run_analysis_pipeline(
                     all_results,
@@ -4821,6 +4882,22 @@ class NewsAnalyzer:
                 raise RuntimeError("数据一致性检查失败：保存后立即读取失败")
         else:
             title_info = self._prepare_current_title_info(results, time_info)
+
+            # AI 数据转换：将标题字典转换为事件字典
+            if self.ai_enabled and self.ai_analyzer:
+                print("🔄 使用 AI 进行事件聚类和数据转换...")
+                event_based_results, has_ai_scores = self.ai_analyzer.cluster_and_transform_data(
+                    results, title_info
+                )
+                if has_ai_scores:
+                    print(f"✅ AI 聚类完成，识别出 {sum(len(events) for events in event_based_results.values())} 个事件")
+                    results = event_based_results
+                else:
+                    print("⚠️  AI 不可用，使用标题归一化降级模式")
+                    results = event_based_results  # 仍然使用降级聚类结果
+            else:
+                print("ℹ️  AI 功能未启用，使用原始标题统计")
+
             ai_analysis = self._run_ai_pipeline(results, title_info)
             stats, html_file = self._run_analysis_pipeline(
                 results,

@@ -84,6 +84,16 @@ weight:
   frequency_weight: 0.3 # 频次权重
   hotness_weight: 0.1 # 热度权重
 
+  # AI 增强评分模式（需要启用 AI 分析功能）
+  # 当 AI 分析可用时，会使用以下权重配置，让 AI 评估的重要性参与排序
+  ai_enhanced:
+    enabled: true  # 是否启用 AI 增强评分（AI 不可用时自动降级到传统模式）
+    rank_weight: 0.3          # 降低排名权重（原 60% → 30%）
+    frequency_weight: 0.25    # 频率权重（原 30% → 25%）
+    hotness_weight: 0.05      # 热度权重（原 10% → 5%）
+    importance_weight: 0.3    # AI 重要性权重（新增 30%）- AI 评估的市场影响、监管重要性、时效性
+    confidence_weight: 0.1    # AI 置信度权重（新增 10%）- AI 对聚类结果的信心程度
+
 # name 可以定义任意名称，只具有显示作用，即使项目运行了几天后，忽然改掉 name 也不会影响代码的正常运行
 platforms:
   - id: "toutiao"
