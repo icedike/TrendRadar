@@ -128,7 +128,8 @@ class AIResultRepository:
             return {"entries": {}}
         try:
             return orjson.loads(cache_file.read_bytes())
-        except Exception:
+        except Exception as e:
+            print(f"⚠️  [AIResultRepository] 載入快取失敗 ({cache_file}): {type(e).__name__}: {e}")
             return {"entries": {}}
 
     def _save_cache(self, cache: Dict[str, Any], date: Optional[datetime] = None) -> None:
@@ -148,7 +149,8 @@ class AIResultRepository:
         latest = json_files[-1]
         try:
             return orjson.loads(latest.read_bytes())
-        except Exception:
+        except Exception as e:
+            print(f"⚠️  [AIResultRepository] 載入分析結果失敗 ({latest}): {type(e).__name__}: {e}")
             return None
 
     def _is_entry_valid(self, entry: Dict[str, Any]) -> bool:
@@ -176,7 +178,8 @@ class AIResultRepository:
             data = orjson.loads(file_path.read_bytes())
             data.setdefault("ai_status", "cached")
             return data
-        except Exception:
+        except Exception as e:
+            print(f"⚠️  [AIResultRepository] 從快取讀取分析結果失敗 ({file_path}): {type(e).__name__}: {e}")
             return None
 
     def put_cache_entry(
@@ -320,6 +323,12 @@ class AIAnalyzer:
         if not articles:
             return []
 
+        # If article count exceeds batch size, use batch processing
+        if len(articles) > self.config.batch_size and self.ollama_client.is_available():
+            print(f"ℹ️  [cluster_events] 處理 {len(articles)} 篇文章，使用批次處理（批次大小: {self.config.batch_size}）")
+            return self._cluster_events_batched(articles)
+
+        # For smaller datasets, process all at once
         if self.ollama_client.is_available():
             prompt = CLUSTER_PROMPT_TEMPLATE.format(
                 payload=json.dumps(articles, ensure_ascii=False)
@@ -342,6 +351,47 @@ class AIAnalyzer:
                     print(f"❌ [cluster_events] 聚類過程發生意外錯誤: {type(e).__name__}: {e}")
                     break
         return self._cluster_locally(articles)
+
+    def _cluster_events_batched(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Cluster articles in batches to avoid token limits."""
+        batch_size = self.config.batch_size
+        all_events: List[Dict[str, Any]] = []
+
+        # Process articles in batches
+        for i in range(0, len(articles), batch_size):
+            batch = articles[i:i + batch_size]
+            print(f"ℹ️  [cluster_events] 處理批次 {i // batch_size + 1}/{(len(articles) + batch_size - 1) // batch_size}")
+
+            prompt = CLUSTER_PROMPT_TEMPLATE.format(
+                payload=json.dumps(batch, ensure_ascii=False)
+            )
+
+            # Retry up to 3 times for JSON parsing errors
+            batch_events = None
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    parsed = json.loads(response)
+                    events = parsed.get("events", [])
+                    batch_events = self._merge_events_with_articles(events, batch)
+                    break
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [cluster_events_batched] 批次 {i // batch_size + 1} LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print(f"❌ [cluster_events_batched] 批次 {i // batch_size + 1} JSON 解析失敗，使用本地聚類")
+                        batch_events = self._cluster_locally(batch)
+                        break
+                    time.sleep(1 * (attempt + 1))
+                except Exception as e:
+                    print(f"❌ [cluster_events_batched] 批次 {i // batch_size + 1} 發生錯誤: {type(e).__name__}: {e}")
+                    batch_events = self._cluster_locally(batch)
+                    break
+
+            if batch_events:
+                all_events.extend(batch_events)
+
+        # Merge similar events across batches
+        return self._merge_cross_batch_events(all_events)
 
     def _merge_events_with_articles(
         self, events: List[Dict[str, Any]], articles: List[Dict[str, Any]]
@@ -564,6 +614,38 @@ class AIAnalyzer:
             if snippets:
                 parts.append("; ".join(snippets))
         return " | ".join(parts)
+
+    def _merge_cross_batch_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Merge similar events that may have been split across batches."""
+        if not events:
+            return []
+
+        # Group events by normalized title
+        title_groups: Dict[str, List[Dict[str, Any]]] = {}
+        for event in events:
+            normalized = self._normalize(event.get("title", ""))
+            if normalized not in title_groups:
+                title_groups[normalized] = []
+            title_groups[normalized].append(event)
+
+        # Merge grouped events
+        merged_events = []
+        for group in title_groups.values():
+            if len(group) == 1:
+                merged_events.append(group[0])
+            else:
+                # Merge multiple events with same normalized title
+                merged = {
+                    "event_id": group[0]["event_id"],
+                    "title": group[0]["title"],
+                    "articles": [],
+                    "rationale": group[0].get("rationale", "")
+                }
+                for event in group:
+                    merged["articles"].extend(event.get("articles", []))
+                merged_events.append(merged)
+
+        return merged_events
 
     def _normalize_category(self, value: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_")

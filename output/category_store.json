@@ -80,6 +80,14 @@
       "created_at": "2025-11-18T17:03:42.120073Z",
       "updated_at": "2025-11-18T17:03:42.120076Z",
       "source_event": ""
+    },
+    {
+      "theme": "technology",
+      "subcategory": "innovation",
+      "description": "Tech advancement",
+      "created_at": "2025-11-18T17:11:20.250920Z",
+      "updated_at": "2025-11-18T17:14:14.807262Z",
+      "source_event": "New blockchain technology breakthrough"
     }
   ]
 }
