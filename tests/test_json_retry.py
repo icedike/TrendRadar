@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """測試 AI analyzer 的 JSON 解析重試機制"""
 
-import json
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from ai_analyzer import AIAnalyzer, OllamaClient
 
 

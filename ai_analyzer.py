@@ -555,6 +555,7 @@ class AIAnalyzer:
             # Retry up to 2 times for summary generation
             for attempt in range(2):
                 try:
+                    # Note: Do not pass format="json" here; summary is expected as plain text.
                     summary = self.ollama_client.generate(prompt)
                     # Validate summary is not empty and reasonable length
                     if summary and len(summary.strip()) > 10:

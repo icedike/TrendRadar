@@ -1,7 +1,7 @@
 """Extended tests for AIAnalyzer - classification, scoring, and summarization."""
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from ai_analyzer import AIAnalyzer
 
 
@@ -266,8 +266,8 @@ class AIAnalyzerExtendedTest(unittest.TestCase):
                     self.assertEqual(result["theme"], "regulation")
                     self.assertEqual(result["subcategory"], "sec_approval")
                     # Check that theme/subcategory contain only ASCII (English)
-                    self.assertTrue(result["theme"].encode('ascii', 'ignore').decode() == result["theme"])
-                    self.assertTrue(result["subcategory"].encode('ascii', 'ignore').decode() == result["subcategory"])
+                    self.assertEqual(result["theme"].encode('ascii', 'ignore').decode(), result["theme"])
+                    self.assertEqual(result["subcategory"].encode('ascii', 'ignore').decode(), result["subcategory"])
 
 
 if __name__ == "__main__":

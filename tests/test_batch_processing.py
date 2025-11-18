@@ -1,7 +1,7 @@
 """Tests for batch processing functionality."""
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from ai_analyzer import AIAnalyzer
 
 
@@ -46,14 +46,6 @@ class BatchProcessingTest(unittest.TestCase):
             {"article_id": f"test:{i}:abc{i}", "title": f"Article {i}", "platform_id": "test"}
             for i in range(12)
         ]
-
-        call_count = {"count": 0}
-
-        def mock_generate(prompt, format=None):
-            batch_num = call_count["count"]
-            call_count["count"] += 1
-            # Return different events for each batch
-            return f'{{"events": [{{"event_id": "e{batch_num}", "title": "Batch {batch_num}", "article_refs": ["test:{batch_num}:abc{batch_num}"], "rationale": "test"}}]}}'
 
         with patch.object(self.analyzer, '_cluster_events_batched') as mock_batched:
             # Mock to return test events
