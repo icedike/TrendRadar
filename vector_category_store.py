@@ -7,7 +7,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,8 +30,16 @@ class CategoryRecord:
     theme: str
     subcategory: str
     description: str
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    updated_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     source_event: str = ""
 
 
@@ -141,7 +149,9 @@ class VectorCategoryStore:
         theme = (theme or "general").strip().lower().replace(" ", "_")
         subcategory = (subcategory or "overview").strip().lower().replace(" ", "_")
         description = description.strip() if description else f"{theme}:{subcategory}"
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = (
+            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
         for entry in self.categories:
             if entry.get("theme") == theme and entry.get("subcategory") == subcategory:
                 entry["description"] = description
@@ -158,4 +168,3 @@ class VectorCategoryStore:
         ).__dict__
         self.categories.append(record)
         self._save()
-*** End
