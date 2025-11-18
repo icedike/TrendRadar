@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -68,22 +69,22 @@ class OllamaClient:
         return response.json()
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
-    def generate(self, prompt: str) -> str:
-        response = self._post(
-            "/api/generate",
-            {"model": self.model, "prompt": prompt, "stream": False},
-        )
+    def generate(self, prompt: str, format: str = None) -> str:
+        payload = {"model": self.model, "prompt": prompt, "stream": False}
+        if format:
+            payload["format"] = format
+        response = self._post("/api/generate", payload)
         content = response.get("response") or response.get("message")
         if not content:
             raise OllamaClientError("Empty response from Ollama")
         return content
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
-    def chat(self, messages: List[Dict[str, str]]) -> str:
-        response = self._post(
-            "/api/chat",
-            {"model": self.model, "messages": messages, "stream": False},
-        )
+    def chat(self, messages: List[Dict[str, str]], format: str = None) -> str:
+        payload = {"model": self.model, "messages": messages, "stream": False}
+        if format:
+            payload["format"] = format
+        response = self._post("/api/chat", payload)
         message = response.get("message", {})
         content = message.get("content")
         if not content:
@@ -320,16 +321,26 @@ class AIAnalyzer:
             return []
 
         if self.ollama_client.is_available():
-            try:
-                prompt = CLUSTER_PROMPT_TEMPLATE.format(
-                    payload=json.dumps(articles, ensure_ascii=False)
-                )
-                response = self.ollama_client.generate(prompt)
-                parsed = json.loads(response)
-                events = parsed.get("events", [])
-                return self._merge_events_with_articles(events, articles)
-            except Exception:
-                pass
+            prompt = CLUSTER_PROMPT_TEMPLATE.format(
+                payload=json.dumps(articles, ensure_ascii=False)
+            )
+            # Retry up to 3 times for JSON parsing errors
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    parsed = json.loads(response)
+                    events = parsed.get("events", [])
+                    return self._merge_events_with_articles(events, articles)
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [cluster_events] LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print("❌ [cluster_events] JSON 解析失敗 3 次，降級到本地聚類")
+                        break
+                    # Wait before retry (exponential backoff: 1s, 2s)
+                    time.sleep(1 * (attempt + 1))
+                except Exception as e:
+                    print(f"❌ [cluster_events] 聚類過程發生意外錯誤: {type(e).__name__}: {e}")
+                    break
         return self._cluster_locally(articles)
 
     def _merge_events_with_articles(
@@ -379,32 +390,40 @@ class AIAnalyzer:
                 "similarity": vector_hit.get("similarity"),
             }
         if self.ollama_client.is_available():
-            try:
-                prompt = CLASSIFICATION_PROMPT.format(
-                    event_summary=context or title
-                )
-                response = self.ollama_client.generate(prompt)
-                data = json.loads(response)
-                if "theme" in data:
-                    theme = self._normalize_category(data.get("theme", "general"))
-                    subcategory = self._normalize_category(
-                        data.get("subcategory", "overview")
-                    )
-                    explanation = data.get("explanation") or title
-                    self.category_store.record_classification(
-                        theme,
-                        subcategory,
-                        explanation,
-                        source_event=title,
-                    )
-                    return {
-                        "theme": theme,
-                        "subcategory": subcategory,
-                        "classification_source": "llm",
-                    }
-            except Exception:
-                # Fall back to keyword-based classification if LLM fails
-                pass
+            prompt = CLASSIFICATION_PROMPT.format(
+                event_summary=context or title
+            )
+            # Retry up to 3 times for JSON parsing errors
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    data = json.loads(response)
+                    if "theme" in data:
+                        theme = self._normalize_category(data.get("theme", "general"))
+                        subcategory = self._normalize_category(
+                            data.get("subcategory", "overview")
+                        )
+                        explanation = data.get("explanation") or title
+                        self.category_store.record_classification(
+                            theme,
+                            subcategory,
+                            explanation,
+                            source_event=title,
+                        )
+                        return {
+                            "theme": theme,
+                            "subcategory": subcategory,
+                            "classification_source": "llm",
+                        }
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [classify_theme] LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print("❌ [classify_theme] JSON 解析失敗 3 次，降級到關鍵字分類")
+                        break
+                    time.sleep(1 * (attempt + 1))
+                except Exception as e:
+                    print(f"❌ [classify_theme] 分類過程發生意外錯誤: {type(e).__name__}: {e}")
+                    break
 
         title_lower = title.lower()
         keywords = {
@@ -432,18 +451,31 @@ class AIAnalyzer:
         articles = event.get("articles", [])
         context = "\n".join(article["title"] for article in articles[:5])
         if self.ollama_client.is_available() and context:
-            try:
-                prompt = SCORING_PROMPT.format(event_context=context)
-                response = self.ollama_client.generate(prompt)
-                data = json.loads(response)
-                importance = float(data.get("importance", 0))
-                confidence = float(data.get("confidence", 0.5))
-                return {
-                    "importance": max(1.0, min(10.0, round(importance, 2))),
-                    "confidence": max(0.0, min(0.99, round(confidence, 2))),
-                }
-            except Exception:
-                pass
+            prompt = SCORING_PROMPT.format(event_context=context)
+            # Retry up to 3 times for JSON parsing errors
+            for attempt in range(3):
+                try:
+                    response = self.ollama_client.generate(prompt, format="json")
+                    data = json.loads(response)
+                    importance = float(data.get("importance", 0))
+                    confidence = float(data.get("confidence", 0.5))
+                    return {
+                        "importance": max(1.0, min(10.0, round(importance, 2))),
+                        "confidence": max(0.0, min(0.99, round(confidence, 2))),
+                    }
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  [score_importance] LLM 返回無效 JSON (嘗試 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # Last attempt
+                        print("❌ [score_importance] JSON 解析失敗 3 次，降級到啟發式評分")
+                        break
+                    time.sleep(1 * (attempt + 1))
+                except (ValueError, KeyError) as e:
+                    print(f"⚠️  [score_importance] 數據格式錯誤: {type(e).__name__}: {e}")
+                    break
+                except Exception as e:
+                    print(f"❌ [score_importance] 評分過程發生意外錯誤: {type(e).__name__}: {e}")
+                    break
+        # Heuristic fallback scoring
         count_score = min(len(articles) / 3, 1)
         ranks = [article.get("source_rank") for article in articles if article.get("source_rank")]
         rank_score = 0
@@ -469,11 +501,20 @@ class AIAnalyzer:
         snippets = [article["title"] for article in articles[:3]]
         context = "; ".join(snippets)
         if self.ollama_client.is_available():
-            try:
-                prompt = SUMMARY_PROMPT.format(event_context=context)
-                return self.ollama_client.generate(prompt)
-            except Exception:
-                pass
+            prompt = SUMMARY_PROMPT.format(event_context=context)
+            # Retry up to 2 times for summary generation
+            for attempt in range(2):
+                try:
+                    summary = self.ollama_client.generate(prompt)
+                    # Validate summary is not empty and reasonable length
+                    if summary and len(summary.strip()) > 10:
+                        return summary.strip()
+                    print(f"⚠️  [generate_summary] LLM 返回空或過短的摘要 (嘗試 {attempt + 1}/2)")
+                except Exception as e:
+                    print(f"⚠️  [generate_summary] 摘要生成失敗 (嘗試 {attempt + 1}/2): {type(e).__name__}: {e}")
+                if attempt < 1:  # Wait before retry
+                    time.sleep(1)
+            print("❌ [generate_summary] 摘要生成失敗，使用截斷的上下文")
         return context[:240]
 
     def _build_result(
