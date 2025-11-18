@@ -289,6 +289,18 @@ def validate_mode(mode: Optional[str], valid_modes: List[str], default: str) -> 
     return mode
 
 
+def validate_theme(theme: Optional[str]) -> str:
+    """Validate theme parameter"""
+    if theme is None:
+        raise InvalidParameterError("theme 参数不能为空")
+    if not isinstance(theme, str):
+        raise InvalidParameterError("theme 必须是字符串")
+    theme = theme.strip()
+    if not theme:
+        raise InvalidParameterError("theme 参数不能为空字符串")
+    return theme
+
+
 def validate_config_section(section: Optional[str]) -> str:
     """
     验证配置节参数

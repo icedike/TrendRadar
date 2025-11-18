@@ -20,6 +20,8 @@ import requests
 import yaml
 import feedparser
 
+from ai_analyzer import AIAnalyzer, AIResultRepository
+
 
 VERSION = "3.0.5"
 
@@ -170,6 +172,27 @@ def load_config():
         },
         "PLATFORMS": config_data["platforms"],
         "RSS_FEEDS": rss_feeds,
+    }
+
+    ai_config = config_data.get("ai_analysis", {})
+    env_ai_enabled = os.environ.get("AI_ANALYSIS_ENABLED", "").strip()
+    env_ai_model = os.environ.get("OLLAMA_MODEL", "").strip()
+    env_ai_url = os.environ.get("OLLAMA_URL", "").strip()
+    env_ai_batch = os.environ.get("AI_BATCH_SIZE", "").strip()
+    env_ai_ttl = os.environ.get("AI_CACHE_TTL_HOURS", "").strip()
+
+    config["AI_ANALYSIS"] = {
+        "ENABLED": (
+            env_ai_enabled.lower() in ("true", "1")
+            if env_ai_enabled
+            else ai_config.get("enabled", False)
+        ),
+        "OLLAMA_MODEL": env_ai_model or ai_config.get("model", "llama3.2:3b"),
+        "OLLAMA_URL": env_ai_url or ai_config.get("ollama_url", "http://127.0.0.1:11434"),
+        "BATCH_SIZE": int(env_ai_batch or ai_config.get("batch_size", 20)),
+        "CACHE_TTL_HOURS": int(env_ai_ttl or ai_config.get("cache_ttl_hours", 24)),
+        "OUTPUT_VERSION": ai_config.get("output_version", "1.0"),
+        "OUTPUT_ROOT": ai_config.get("output_root", "output"),
     }
 
     # 通知渠道配置（环境变量优先）
@@ -1748,6 +1771,7 @@ def generate_html_report(
     mode: str = "daily",
     is_daily_summary: bool = False,
     update_info: Optional[Dict] = None,
+    ai_analysis: Optional[Dict] = None,
 ) -> str:
     """生成HTML报告"""
     if is_daily_summary:
@@ -1765,7 +1789,12 @@ def generate_html_report(
     report_data = prepare_report_data(stats, failed_ids, new_titles, id_to_name, mode)
 
     html_content = render_html_content(
-        report_data, total_titles, is_daily_summary, mode, update_info
+        report_data,
+        total_titles,
+        is_daily_summary,
+        mode,
+        update_info,
+        ai_analysis=ai_analysis,
     )
 
     with open(file_path, "w", encoding="utf-8") as f:
@@ -1785,6 +1814,7 @@ def render_html_content(
     is_daily_summary: bool = False,
     mode: str = "daily",
     update_info: Optional[Dict] = None,
+    ai_analysis: Optional[Dict] = None,
 ) -> str:
     """渲染HTML内容"""
     html = """
@@ -1892,6 +1922,59 @@ def render_html_content(
             
             .content {
                 padding: 24px;
+            }
+
+            .ai-section {
+                margin: 16px 24px 0;
+                padding: 16px 20px;
+                background: #eef2ff;
+                border: 1px solid #c7d2fe;
+                border-radius: 10px;
+            }
+
+            .ai-section h2 {
+                margin: 0 0 12px 0;
+                font-size: 18px;
+            }
+
+            .ai-event {
+                background: white;
+                border-radius: 10px;
+                padding: 12px 16px;
+                margin-bottom: 12px;
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                box-shadow: 0 4px 10px rgba(79, 70, 229, 0.08);
+            }
+
+            .ai-event h3 {
+                margin: 0 0 8px 0;
+                font-size: 16px;
+            }
+
+            .ai-tags {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+
+            .ai-tag {
+                font-size: 12px;
+                padding: 2px 8px;
+                border-radius: 999px;
+                background: rgba(79, 70, 229, 0.1);
+                color: #4f46e5;
+            }
+
+            .ai-score {
+                font-size: 13px;
+                color: #4b5563;
+            }
+
+            .ai-message {
+                font-size: 13px;
+                color: #4b5563;
+                margin: 0;
             }
             
             .word-group {
@@ -2274,7 +2357,54 @@ def render_html_content(
                     </div>
                 </div>
             </div>
-            
+"""
+
+    ai_enabled = CONFIG.get("AI_ANALYSIS", {}).get("ENABLED", False)
+    if ai_analysis:
+        events = ai_analysis.get("events", [])
+        message = ai_analysis.get("message")
+        html += """
+            <div class="ai-section">
+                <h2>AI 热点分析</h2>
+        """
+        if message:
+            html += f'<p class="ai-message">{html_escape(message)}</p>'
+        if events:
+            for event in events[:6]:
+                title = html_escape(event.get("title", "AI 事件"))
+                theme = html_escape(event.get("theme", "general"))
+                subcategory = html_escape(event.get("subcategory", "overview"))
+                summary = html_escape(event.get("summary", ""))
+                importance = event.get("importance", "-")
+                confidence = event.get("confidence", "-")
+                sentiment = html_escape(event.get("sentiment", "neutral"))
+                html += f"""
+                <div class=\"ai-event\">
+                    <h3>{title}</h3>
+                    <div class=\"ai-tags\">
+                        <span class=\"ai-tag\">主题: {theme}</span>
+                        <span class=\"ai-tag\">子类: {subcategory}</span>
+                        <span class=\"ai-tag\">情绪: {sentiment}</span>
+                    </div>
+                    <p class=\"ai-message\">{summary}</p>
+                    <div class=\"ai-score\">重要性 {importance} · 置信度 {confidence}</div>
+                </div>
+                """
+        else:
+            html += "<p class=\"ai-message\">暂无可展示的事件</p>"
+        html += """
+            </div>
+        """
+    elif ai_enabled:
+        html += """
+            <div class="ai-section">
+                <h2>AI 热点分析</h2>
+                <p class="ai-message">AI 模块已启用，但尚未生成最新分析。</p>
+            </div>
+        """
+
+    html += """
+
             <div class="content">"""
 
     # 处理失败ID错误信息
@@ -4202,6 +4332,25 @@ class NewsAnalyzer:
             if feed.get("enabled", True) and feed.get("url")
         ]
         self.platform_configs = self._load_platform_configs()
+        self.ai_config = CONFIG.get("AI_ANALYSIS", {})
+        self.ai_enabled = self.ai_config.get("ENABLED", False)
+        self.ai_repository = AIResultRepository(
+            output_root=self.ai_config.get("OUTPUT_ROOT", "output"),
+            cache_ttl_hours=self.ai_config.get("CACHE_TTL_HOURS", 24),
+        )
+        self.ai_analyzer: Optional[AIAnalyzer] = None
+        self.latest_ai_result: Optional[Dict] = None
+        if self.ai_enabled:
+            try:
+                self.ai_analyzer = AIAnalyzer(
+                    self.ai_config,
+                    self.platform_configs,
+                    repository=self.ai_repository,
+                )
+                print("AI分析模块已启用")
+            except Exception as exc:
+                print(f"⚠️ 初始化 AI 分析模块失败：{exc}")
+                self.ai_enabled = False
 
         if self.source_type == "rss":
             self.data_fetcher = RSSFetcher(
@@ -4362,6 +4511,30 @@ class NewsAnalyzer:
                 }
         return title_info
 
+    def _run_ai_pipeline(
+        self,
+        data_source: Dict,
+        title_info: Optional[Dict],
+    ) -> Optional[Dict]:
+        if not self.ai_enabled or not self.ai_analyzer:
+            return None
+
+        try:
+            ai_result = self.ai_analyzer.analyze(data_source, title_info)
+            if ai_result:
+                self.latest_ai_result = ai_result
+            return ai_result
+        except Exception as exc:
+            print(f"AI 分析失败：{exc}")
+            fallback = {
+                "ai_status": "error",
+                "message": str(exc),
+                "generated_at": get_beijing_time().isoformat(),
+                "events": [],
+            }
+            self.latest_ai_result = fallback
+            return fallback
+
     def _run_analysis_pipeline(
         self,
         data_source: Dict,
@@ -4373,6 +4546,7 @@ class NewsAnalyzer:
         id_to_name: Dict,
         failed_ids: Optional[List] = None,
         is_daily_summary: bool = False,
+        ai_analysis: Optional[Dict] = None,
     ) -> Tuple[List[Dict], str]:
         """统一的分析流水线：数据处理 → 统计计算 → HTML生成"""
 
@@ -4398,6 +4572,7 @@ class NewsAnalyzer:
             mode=mode,
             is_daily_summary=is_daily_summary,
             update_info=self.update_info if CONFIG["SHOW_VERSION_UPDATE"] else None,
+            ai_analysis=ai_analysis,
         )
 
         return stats, html_file
@@ -4479,6 +4654,7 @@ class NewsAnalyzer:
             filter_words,
             id_to_name,
             is_daily_summary=True,
+            ai_analysis=self.latest_ai_result,
         )
 
         print(f"{summary_type}报告已生成: {html_file}")
@@ -4520,6 +4696,7 @@ class NewsAnalyzer:
             filter_words,
             id_to_name,
             is_daily_summary=True,
+            ai_analysis=self.latest_ai_result,
         )
 
         print(f"{summary_type}HTML已生成: {html_file}")
@@ -4610,6 +4787,7 @@ class NewsAnalyzer:
                     f"current模式：使用过滤后的历史数据，包含平台：{list(all_results.keys())}"
                 )
 
+                ai_analysis = self._run_ai_pipeline(all_results, historical_title_info)
                 stats, html_file = self._run_analysis_pipeline(
                     all_results,
                     self.report_mode,
@@ -4619,6 +4797,7 @@ class NewsAnalyzer:
                     filter_words,
                     historical_id_to_name,
                     failed_ids=failed_ids,
+                    ai_analysis=ai_analysis,
                 )
 
                 combined_id_to_name = {**historical_id_to_name, **id_to_name}
@@ -4642,6 +4821,7 @@ class NewsAnalyzer:
                 raise RuntimeError("数据一致性检查失败：保存后立即读取失败")
         else:
             title_info = self._prepare_current_title_info(results, time_info)
+            ai_analysis = self._run_ai_pipeline(results, title_info)
             stats, html_file = self._run_analysis_pipeline(
                 results,
                 self.report_mode,
@@ -4651,6 +4831,7 @@ class NewsAnalyzer:
                 filter_words,
                 id_to_name,
                 failed_ids=failed_ids,
+                ai_analysis=ai_analysis,
             )
             print(f"HTML报告已生成: {html_file}")
 

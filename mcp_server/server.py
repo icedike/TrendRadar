@@ -15,6 +15,7 @@ from .tools.analytics import AnalyticsTools
 from .tools.search_tools import SearchTools
 from .tools.config_mgmt import ConfigManagementTools
 from .tools.system import SystemManagementTools
+from .tools.ai_analysis import AIAnalysisTools
 
 
 # 创建 FastMCP 2.0 应用
@@ -32,6 +33,7 @@ def _get_tools(project_root: Optional[str] = None):
         _tools_instances['search'] = SearchTools(project_root)
         _tools_instances['config'] = ConfigManagementTools(project_root)
         _tools_instances['system'] = SystemManagementTools(project_root)
+        _tools_instances['ai'] = AIAnalysisTools(project_root)
     return _tools_instances
 
 
@@ -145,6 +147,30 @@ async def get_news_by_date(
         limit=limit,
         include_url=include_url
     )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def analyze_latest_news_with_ai() -> str:
+    """获取最新的 AI 分析结果"""
+    tools = _get_tools()
+    result = tools['ai'].get_latest_ai_analysis()
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def get_top_ai_events(top_n: int = 5) -> str:
+    """按重要性获取 Top N AI 事件"""
+    tools = _get_tools()
+    result = tools['ai'].get_top_events(top_n)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def search_ai_events_by_theme(theme: str) -> str:
+    """按主题搜索 AI 事件"""
+    tools = _get_tools()
+    result = tools['ai'].search_events_by_theme(theme)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 

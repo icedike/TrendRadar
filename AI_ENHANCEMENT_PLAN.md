@@ -230,6 +230,17 @@ RSS 源 → 爬蟲 → 保存 TXT → 關鍵字過濾 → 統計排序 → HTML 
 - **HTML 注入：** `generate_html_report()` 在 `report_data` 中新增 `ai_events` 欄位，渲染 `AI 熱點分析` 卡片與降級提示，避免阻塞既有的頻率詞報表。
 - **MCP 可用性：** `ai_analysis` JSON 落地後由 `ParserService` 新增 `read_ai_analysis(date)` 方法供 `DataService` 與新的 MCP 工具查詢，確保 Claude 端與本地報表共用同一份資料。
 
+#### 4.2.2 主題分類增強（Vector DB + LLM）
+
+為兼顧 deterministic 與語意彈性，分類流程新增 VectorCategoryStore：
+
+- **向量分類庫**：以 `theme/subcategory/description` 產生嵌入（餘弦相似度），預設 10 大主題 + 常見子類別，儲存於 `output/category_store.json`，由 AI pipeline 啟動時自動載入。
+- **檢索優先**：每則事件先查詢分類庫，若最高分 ≥ 0.82 直接回傳該分類，MCP 可同步取得 `similarity_score` 以利 UI 呈現信心指標。
+- **生成補充**：分數低於門檻才呼叫 LLM，提示允許「在既有分類不適合時新增主題」，並將模型輸出（含 explanation）寫回分類庫，供下次檢索命中。
+- **治理機制**：分類庫保留 `created_at`、`updated_at`、`source_event` 等欄位，支援手動編輯與版本控制；亦可透過 `vector_version` 觸發重建以更換演算法。
+
+此調整讓舊分類維持穩定輸出，同時在新議題出現時可由 AI 自動擴充，避免頻繁調整硬編碼關鍵字。
+
 ### 4.3 Prompt Engineering 策略
 
 **聚類提示詞範例：**
