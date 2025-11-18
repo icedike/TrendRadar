@@ -1654,14 +1654,23 @@ def prepare_report_data(
 def format_title_for_platform(
     platform: str, title_data: Dict, show_source: bool = True
 ) -> str:
-    """统一的标题格式化方法"""
+    """统一的标题格式化方法（支持AI评分显示）"""
     rank_display = format_rank_display(
         title_data["ranks"], title_data["rank_threshold"], platform
     )
 
     link_url = title_data["mobile_url"] or title_data["url"]
-
     cleaned_title = clean_title(title_data["title"])
+
+    # 检测是否是事件数据
+    is_event = title_data.get("has_ai_score", False) or "event_title" in title_data
+    count_info = title_data.get("frequency", title_data.get("count", 1))
+
+    # AI评分信息
+    importance = title_data.get("importance", 0)
+    confidence = title_data.get("confidence", 0)
+    theme = title_data.get("theme", "")
+    subcategory = title_data.get("subcategory", "")
 
     if platform == "feishu":
         if link_url:
@@ -1680,8 +1689,24 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" <font color='grey'>- {title_data['time_display']}</font>"
-        if title_data["count"] > 1:
-            result += f" <font color='green'>({title_data['count']}次)</font>"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" <font color='green'>({count_info}{count_label})</font>"
+
+        # 显示AI评分
+        if importance or confidence or theme:
+            ai_info = []
+            if importance:
+                color = 'red' if importance >= 7 else 'orange'
+                ai_info.append(f"<font color='{color}'>重要{importance:.1f}</font>")
+            if confidence:
+                ai_info.append(f"<font color='blue'>信心{int(confidence * 100)}%</font>")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(f"<font color='purple'>{theme_text}</font>")
+            result += f" <font color='grey'>|</font> {' '.join(ai_info)}"
 
         return result
 
@@ -1702,8 +1727,21 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" - {title_data['time_display']}"
-        if title_data["count"] > 1:
-            result += f" ({title_data['count']}次)"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" ({count_info}{count_label})"
+
+        # 显示AI评分（简化版）
+        if importance or theme:
+            ai_info = []
+            if importance:
+                ai_info.append(f"重要{importance:.1f}")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(theme_text)
+            result += f" | {' '.join(ai_info)}"
 
         return result
 
@@ -1724,8 +1762,21 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" - {title_data['time_display']}"
-        if title_data["count"] > 1:
-            result += f" ({title_data['count']}次)"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" ({count_info}{count_label})"
+
+        # 显示AI评分（简化版）
+        if importance or theme:
+            ai_info = []
+            if importance:
+                ai_info.append(f"重要{importance:.1f}")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(theme_text)
+            result += f" | {' '.join(ai_info)}"
 
         return result
 
@@ -1746,8 +1797,23 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" <code>- {title_data['time_display']}</code>"
-        if title_data["count"] > 1:
-            result += f" <code>({title_data['count']}次)</code>"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" <code>({count_info}{count_label})</code>"
+
+        # 显示AI评分
+        if importance or confidence or theme:
+            ai_info = []
+            if importance:
+                ai_info.append(f"重要{importance:.1f}/10")
+            if confidence:
+                ai_info.append(f"信心{int(confidence * 100)}%")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(theme_text)
+            result += f" <code>| {' '.join(ai_info)}</code>"
 
         return result
 
@@ -2160,14 +2226,83 @@ def render_html_content(
                 font-size: 11px;
                 font-weight: 500;
             }
-            
+
             .news-title {
                 font-size: 15px;
                 line-height: 1.4;
                 color: #1a1a1a;
                 margin: 0;
             }
-            
+
+            /* AI 评分样式 */
+            .ai-scores {
+                display: flex;
+                gap: 6px;
+                margin-top: 6px;
+                flex-wrap: wrap;
+            }
+
+            .ai-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 3px;
+                padding: 3px 8px;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+
+            .ai-badge.importance { background: #fef3c7; color: #92400e; }
+            .ai-badge.importance.high { background: #fecaca; color: #991b1b; }
+            .ai-badge.confidence { background: #dbeafe; color: #1e40af; }
+            .ai-badge.theme { background: #e0e7ff; color: #3730a3; }
+
+            /* 事件文章列表样式 */
+            .event-articles {
+                margin-top: 8px;
+                padding-top: 8px;
+                border-top: 1px solid #f3f4f6;
+            }
+
+            .event-articles summary {
+                cursor: pointer;
+                font-size: 12px;
+                color: #6b7280;
+                user-select: none;
+                list-style: none;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-weight: 500;
+            }
+
+            .event-articles summary::-webkit-details-marker { display: none; }
+            .event-articles summary::before {
+                content: '▶';
+                font-size: 9px;
+                transition: transform 0.2s;
+                display: inline-block;
+            }
+            .event-articles[open] summary::before { transform: rotate(90deg); }
+
+            .article-list {
+                margin-top: 8px;
+                padding-left: 4px;
+            }
+
+            .article-item {
+                font-size: 12px;
+                color: #6b7280;
+                margin: 6px 0;
+                padding-left: 12px;
+                border-left: 2px solid #e5e7eb;
+                line-height: 1.6;
+            }
+
+            .article-item a { color: #3b82f6; text-decoration: none; }
+            .article-item a:hover { text-decoration: underline; }
+            .article-source { color: #9ca3af; font-weight: 500; }
+
             .news-link {
                 color: #2563eb;
                 text-decoration: none;
@@ -2539,10 +2674,13 @@ def render_html_content(
                         f'<span class="time-info">{html_escape(simplified_time)}</span>'
                     )
 
-                # 处理出现次数
-                count_info = title_data.get("count", 1)
+                # 处理出现次数/频率
+                count_info = title_data.get("frequency", title_data.get("count", 1))
+                is_event = title_data.get("has_ai_score", False) or "event_title" in title_data
+
                 if count_info > 1:
-                    html += f'<span class="count-info">{count_info}次</span>'
+                    count_label = "篇文章" if is_event else "次"
+                    html += f'<span class="count-info">{count_info}{count_label}</span>'
 
                 html += """
                             </div>
@@ -2559,7 +2697,66 @@ def render_html_content(
                     html += escaped_title
 
                 html += """
-                            </div>
+                            </div>"""
+
+                # 添加AI评分信息
+                if title_data.get("has_ai_score", False):
+                    importance = title_data.get("importance", 0)
+                    confidence = title_data.get("confidence", 0)
+                    theme = title_data.get("theme", "")
+                    subcategory = title_data.get("subcategory", "")
+
+                    if importance or confidence or theme:
+                        html += """
+                            <div class="ai-scores">"""
+
+                        if importance:
+                            importance_class = "high" if importance >= 7 else ""
+                            html += f'<span class="ai-badge importance {importance_class}">重要性 {importance:.1f}/10</span>'
+
+                        if confidence:
+                            html += f'<span class="ai-badge confidence">置信度 {int(confidence * 100)}%</span>'
+
+                        if theme:
+                            theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                            html += f'<span class="ai-badge theme">{html_escape(theme_text)}</span>'
+
+                        html += """
+                            </div>"""
+
+                # 添加事件文章列表（如果是事件数据且包含多篇文章）
+                articles = title_data.get("articles", [])
+                if is_event and articles and len(articles) > 1:
+                    html += f"""
+                            <details class="event-articles">
+                                <summary>查看 {len(articles)} 篇原始文章</summary>
+                                <div class="article-list">"""
+
+                    for article in articles:
+                        article_title = article.get("title", "")
+                        article_url = article.get("url", "")
+                        platform_name = article.get("platform_name", "")
+
+                        if article_title:
+                            escaped_article_title = html_escape(article_title)
+                            html += '<div class="article-item">'
+
+                            if platform_name:
+                                html += f'<span class="article-source">[{html_escape(platform_name)}]</span> '
+
+                            if article_url:
+                                escaped_article_url = html_escape(article_url)
+                                html += f'<a href="{escaped_article_url}" target="_blank">{escaped_article_title}</a>'
+                            else:
+                                html += escaped_article_title
+
+                            html += '</div>'
+
+                    html += """
+                                </div>
+                            </details>"""
+
+                html += """
                         </div>
                     </div>"""
 
