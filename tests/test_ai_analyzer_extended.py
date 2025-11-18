@@ -245,6 +245,30 @@ class AIAnalyzerExtendedTest(unittest.TestCase):
 
         self.assertNotEqual(hash1, hash2)
 
+    def test_classify_theme_returns_english(self):
+        """Test that LLM classification returns English fields."""
+        event = {
+            "title": "SEC 批准比特幣 ETF",  # Chinese title
+            "articles": []
+        }
+
+        # Mock vector store to return None (force LLM classification)
+        # Mock LLM to return English classification
+        with patch.object(self.analyzer.category_store, 'lookup', return_value=None):
+            with patch.object(self.analyzer.ollama_client, 'is_available', return_value=True):
+                with patch.object(self.analyzer.ollama_client, 'generate') as mock_gen:
+                    # LLM returns English fields
+                    mock_gen.return_value = '{"theme": "regulation", "subcategory": "sec_approval", "explanation": "SEC approves Bitcoin ETF application"}'
+
+                    result = self.analyzer.classify_theme(event)
+
+                    # Verify all fields are English (no Chinese characters)
+                    self.assertEqual(result["theme"], "regulation")
+                    self.assertEqual(result["subcategory"], "sec_approval")
+                    # Check that theme/subcategory contain only ASCII (English)
+                    self.assertTrue(result["theme"].encode('ascii', 'ignore').decode() == result["theme"])
+                    self.assertTrue(result["subcategory"].encode('ascii', 'ignore').decode() == result["subcategory"])
+
 
 if __name__ == "__main__":
     unittest.main()

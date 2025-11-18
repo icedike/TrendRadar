@@ -439,6 +439,11 @@ export OLLAMA_NUM_PARALLEL=1
 }
 ```
 
+**重要**：
+- `theme`, `subcategory`, `description` 必須使用**英文**
+- 這是為了確保向量相似度計算的準確性
+- AI 會自動遵守這個規則（已在 prompt 中強制要求）
+
 下次分析時 AI 會自動使用新分類。
 
 ### 技巧 2：查看 AI 分析原始數據

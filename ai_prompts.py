@@ -4,10 +4,10 @@ CLUSTER_PROMPT_TEMPLATE = """
 You are the AI research editor for TrendRadar. Group the incoming crypto news
 articles into distinct events so readers can avoid duplicates. Read the JSON
 payload and output **only** JSON with an `events` array. For each event, include:
-- event_id: stable snake_case identifier (e.g. mt_gox_btc_transfer)
+- event_id: stable snake_case identifier (e.g. mt_gox_btc_transfer) **in English**
 - title: short, neutral headline (<= 12 words)
 - theme: choose from [regulation, market, technology, defi, nft, personnel,
-  security, institutional, macro, ecosystem]
+  security, institutional, macro, ecosystem] **in English lowercase**
 - article_refs: list of article_id values to merge into this event
 - rationale: 1 sentence on why the articles belong together
 - confidence: value between 0 and 1 describing clustering certainty
@@ -16,6 +16,7 @@ Rules:
 1. If the payload is empty, return {{"events": []}}.
 2. Do not invent facts—derive titles and rationales from supplied content.
 3. Prefer fewer, more meaningful events; singletons are allowed if unique.
+4. **IMPORTANT**: event_id and theme must be in English lowercase/snake_case.
 
 Payload:
 {payload}
@@ -38,6 +39,7 @@ Guidance:
 - `explanation` is one brief sentence linking the event to the chosen theme.
 - If you create a new theme, justify why existing options do not apply and
   still provide a concise `subcategory` describing the focus.
+- **IMPORTANT**: All fields (theme, subcategory, explanation) must be in English.
 
 Event summary: {event_summary}
 """
