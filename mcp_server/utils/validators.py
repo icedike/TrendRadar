@@ -290,7 +290,7 @@ def validate_mode(mode: Optional[str], valid_modes: List[str], default: str) -> 
 
 
 def validate_theme(theme: Optional[str]) -> str:
-    """验证主题参数"""
+    """Validate theme parameter"""
     if theme is None:
         raise InvalidParameterError("theme 参数不能为空")
     if not isinstance(theme, str):
