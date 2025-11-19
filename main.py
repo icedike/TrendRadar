@@ -1112,12 +1112,7 @@ def calculate_news_weight(
 
     # 判断使用哪种评分模式
     ai_enhanced_config = weight_config.get("ai_enhanced", {})
-    use_ai_mode = (
-        has_ai_score
-        and ai_enhanced_config.get("enabled", False)
-        and "importance" in title_data
-        and "confidence" in title_data
-    )
+    use_ai_mode = has_ai_score and ai_enhanced_config.get("enabled", False)
 
     if use_ai_mode:
         # AI 增强模式
@@ -1463,6 +1458,7 @@ def count_word_frequency(
                 }
 
                 # 保留 AI 相关字段，供后续权重计算和展示使用
+                # 注意：articles 列表包含完整的文章信息，用于在 HTML 报告中展示详情
                 for ai_key in ["importance", "confidence", "has_ai_score", "articles"]:
                     if ai_key in title_data:
                         entry[ai_key] = title_data[ai_key]
@@ -1471,7 +1467,7 @@ def count_word_frequency(
 
                 if source_id not in processed_titles:
                     processed_titles[source_id] = {}
-                processed_titles[source_id][title] = True
+                processed_titles[source_id][key] = True
 
                 break
 
@@ -1656,6 +1652,11 @@ def prepare_report_data(
     }
 
 
+def is_event_data(title_data: Dict) -> bool:
+    """检测数据是否为事件数据（而非单纯的标题数据）"""
+    return title_data.get("has_ai_score", False) or bool(title_data.get("event_title"))
+
+
 def format_title_for_platform(
     platform: str, title_data: Dict, show_source: bool = True
 ) -> str:
@@ -1668,7 +1669,7 @@ def format_title_for_platform(
     cleaned_title = clean_title(title_data["title"])
 
     # 检测是否是事件数据
-    is_event = title_data.get("has_ai_score", False) or "event_title" in title_data
+    is_event = is_event_data(title_data)
     count_info = title_data.get("frequency", title_data.get("count", 1))
 
     # AI评分信息
@@ -1701,12 +1702,12 @@ def format_title_for_platform(
             result += f" <font color='green'>({count_info}{count_label})</font>"
 
         # 显示AI评分
-        if importance or confidence or theme:
+        if importance is not None or confidence is not None or theme:
             ai_info = []
-            if importance:
+            if importance is not None:
                 color = 'red' if importance >= 7 else 'orange'
                 ai_info.append(f"<font color='{color}'>重要{importance:.1f}</font>")
-            if confidence:
+            if confidence is not None:
                 ai_info.append(f"<font color='blue'>信心{int(confidence * 100)}%</font>")
             if theme:
                 theme_text = f"{theme}/{subcategory}" if subcategory else theme
@@ -1739,9 +1740,9 @@ def format_title_for_platform(
             result += f" ({count_info}{count_label})"
 
         # 显示AI评分（简化版）
-        if importance or theme:
+        if importance is not None or theme:
             ai_info = []
-            if importance:
+            if importance is not None:
                 ai_info.append(f"重要{importance:.1f}")
             if theme:
                 theme_text = f"{theme}/{subcategory}" if subcategory else theme
@@ -1774,9 +1775,9 @@ def format_title_for_platform(
             result += f" ({count_info}{count_label})"
 
         # 显示AI评分（简化版）
-        if importance or theme:
+        if importance is not None or theme:
             ai_info = []
-            if importance:
+            if importance is not None:
                 ai_info.append(f"重要{importance:.1f}")
             if theme:
                 theme_text = f"{theme}/{subcategory}" if subcategory else theme
@@ -2681,7 +2682,7 @@ def render_html_content(
 
                 # 处理出现次数/频率
                 count_info = title_data.get("frequency", title_data.get("count", 1))
-                is_event = title_data.get("has_ai_score", False) or "event_title" in title_data
+                is_event = is_event_data(title_data)
 
                 if count_info > 1:
                     count_label = "篇文章" if is_event else "次"
@@ -2706,20 +2707,20 @@ def render_html_content(
 
                 # 添加AI评分信息
                 if title_data.get("has_ai_score", False):
-                    importance = title_data.get("importance", 0)
-                    confidence = title_data.get("confidence", 0)
+                    importance = title_data.get("importance")
+                    confidence = title_data.get("confidence")
                     theme = title_data.get("theme", "")
                     subcategory = title_data.get("subcategory", "")
 
-                    if importance or confidence or theme:
+                    if importance is not None or confidence is not None or theme:
                         html += """
                             <div class="ai-scores">"""
 
-                        if importance:
+                        if importance is not None:
                             importance_class = "high" if importance >= 7 else ""
                             html += f'<span class="ai-badge importance {importance_class}">重要性 {importance:.1f}/10</span>'
 
-                        if confidence:
+                        if confidence is not None:
                             html += f'<span class="ai-badge confidence">置信度 {int(confidence * 100)}%</span>'
 
                         if theme:

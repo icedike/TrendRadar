@@ -84,7 +84,7 @@ weight:
   frequency_weight: 0.3 # 频次权重
   hotness_weight: 0.1 # 热度权重
 
-  # AI 增强评分模式（需要启用 AI 分析功能）
+  # AI 增强评分模式（需将上方 ai_analysis.enabled 设置为 true 才可用）
   # 当 AI 分析可用时，会使用以下权重配置，让 AI 评估的重要性参与排序
   ai_enhanced:
     enabled: true  # 是否启用 AI 增强评分（AI 不可用时自动降级到传统模式）

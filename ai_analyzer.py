@@ -673,7 +673,7 @@ class AIAnalyzer:
         # 准备 AI payload
         payload = self.prepare_ai_payload(raw_results, title_info)
         if not payload:
-            return raw_results, False  # 降级：返回原始数据
+            return self._fallback_title_clustering(raw_results, title_info), False  # 降级：返回原始数据
 
         # 检查是否启用 AI
         if not self.ollama_client.is_available():
@@ -794,6 +794,9 @@ class AIAnalyzer:
         """
         降级模式：基于标题归一化的简单聚类
         将相似标题（去除标点、大小写后相同）归为一个事件
+        
+        注意：此函数要求 raw_results 为标题字典格式 {platform_id: {title: {data}}}
+        而不是事件字典格式。title_info 也应为标题索引的时间信息。
         """
         result: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
