@@ -1459,7 +1459,8 @@ def count_word_frequency(
 
                 # 保留 AI 相关字段，供后续权重计算和展示使用
                 # 注意：articles 列表包含完整的文章信息，用于在 HTML 报告中展示详情
-                for ai_key in ["importance", "confidence", "has_ai_score", "articles"]:
+                for ai_key in ["importance", "confidence", "has_ai_score", "articles",
+                               "theme", "subcategory", "sentiment", "summary"]:
                     if ai_key in title_data:
                         entry[ai_key] = title_data[ai_key]
 
@@ -5039,21 +5040,26 @@ class NewsAnalyzer:
                 raw_results = all_results
 
                 # AI 数据转换：将标题字典转换为事件字典
+                ai_analysis = None
                 if self.ai_enabled and self.ai_analyzer:
                     print("🔄 使用 AI 进行事件聚类和数据转换...")
-                    event_based_results, has_ai_scores = self.ai_analyzer.cluster_and_transform_data(
+                    event_based_results, has_ai_scores, enriched_events = self.ai_analyzer.cluster_and_transform_data(
                         all_results, historical_title_info
                     )
                     if has_ai_scores:
                         print(f"✅ AI 聚类完成，识别出 {sum(len(events) for events in event_based_results.values())} 个事件")
                         all_results = event_based_results
+                        # 构建 AI 分析结果供 HTML 展示使用
+                        ai_analysis = {
+                            "events": enriched_events,
+                            "ai_status": "ok",
+                            "generated_at": get_beijing_time().isoformat(),
+                        }
                     else:
                         print("⚠️  AI 不可用，使用标题归一化降级模式")
                         all_results = event_based_results  # 仍然使用降级聚类结果
                 else:
                     print("ℹ️  AI 功能未启用，使用原始标题统计")
-
-                ai_analysis = self._run_ai_pipeline(raw_results, historical_title_info)
                 stats, html_file = self._run_analysis_pipeline(
                     all_results,
                     self.report_mode,
@@ -5091,21 +5097,26 @@ class NewsAnalyzer:
             raw_results = results
 
             # AI 数据转换：将标题字典转换为事件字典
+            ai_analysis = None
             if self.ai_enabled and self.ai_analyzer:
                 print("🔄 使用 AI 进行事件聚类和数据转换...")
-                event_based_results, has_ai_scores = self.ai_analyzer.cluster_and_transform_data(
+                event_based_results, has_ai_scores, enriched_events = self.ai_analyzer.cluster_and_transform_data(
                     results, title_info
                 )
                 if has_ai_scores:
                     print(f"✅ AI 聚类完成，识别出 {sum(len(events) for events in event_based_results.values())} 个事件")
                     results = event_based_results
+                    # 构建 AI 分析结果供 HTML 展示使用
+                    ai_analysis = {
+                        "events": enriched_events,
+                        "ai_status": "ok",
+                        "generated_at": get_beijing_time().isoformat(),
+                    }
                 else:
                     print("⚠️  AI 不可用，使用标题归一化降级模式")
                     results = event_based_results  # 仍然使用降级聚类结果
             else:
                 print("ℹ️  AI 功能未启用，使用原始标题统计")
-
-            ai_analysis = self._run_ai_pipeline(raw_results, title_info)
             stats, html_file = self._run_analysis_pipeline(
                 results,
                 self.report_mode,
