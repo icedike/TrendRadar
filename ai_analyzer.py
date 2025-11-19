@@ -859,6 +859,7 @@ class AIAnalyzer:
                     if title_info and platform_id in title_info and title in title_info[platform_id]:
                         timestamp = title_info[platform_id][title].get("last_time", "")
 
+                    ranks = data.get("ranks", [])
                     articles_list.append({
                         "article_id": article_id,
                         "platform_id": platform_id,
@@ -866,8 +867,8 @@ class AIAnalyzer:
                         "title": title,
                         "url": data.get("url", ""),
                         "mobile_url": data.get("mobileUrl", ""),
-                        "ranks": data.get("ranks", []),
-                        "source_rank": data.get("ranks", [None])[0] if data.get("ranks") else None,
+                        "ranks": ranks,
+                        "source_rank": ranks[0] if ranks else None,
                         "timestamp": timestamp,
                     })
 
