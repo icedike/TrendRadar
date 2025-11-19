@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -509,6 +510,11 @@ class AIAnalyzer:
                     data = json.loads(response)
                     importance = float(data.get("importance", 0))
                     confidence = float(data.get("confidence", 0.5))
+
+                    # Validate for NaN/Infinity
+                    if not (math.isfinite(importance) and math.isfinite(confidence)):
+                        raise ValueError(f"Invalid numeric values from LLM: importance={importance}, confidence={confidence}")
+
                     return {
                         "importance": max(1.0, min(10.0, round(importance, 2))),
                         "confidence": max(0.0, min(0.99, round(confidence, 2))),
@@ -844,9 +850,31 @@ class AIAnalyzer:
                                     last_time = lt
 
                 # 创建简化的事件数据（没有AI评分）
+                # 构建与 AI 模式兼容的 articles 列表
+                articles_list = []
+                platform_name = self.platform_name_map.get(platform_id, platform_id)
+                for idx, (title, data) in enumerate(title_list, start=1):
+                    article_id = f"{platform_id}:{idx}:{hashlib.md5(title.encode('utf-8')).hexdigest()[:6]}"
+                    timestamp = ""
+                    if title_info and platform_id in title_info and title in title_info[platform_id]:
+                        timestamp = title_info[platform_id][title].get("last_time", "")
+
+                    ranks = data.get("ranks", [])
+                    articles_list.append({
+                        "article_id": article_id,
+                        "platform_id": platform_id,
+                        "platform_name": platform_name,
+                        "title": title,
+                        "url": data.get("url", ""),
+                        "mobile_url": data.get("mobileUrl", ""),
+                        "ranks": ranks,
+                        "source_rank": ranks[0] if ranks else None,
+                        "timestamp": timestamp,
+                    })
+
                 event_data = {
                     "event_title": first_title,
-                    "articles": [{"title": t, "data": d} for t, d in title_list],
+                    "articles": articles_list,
                     "frequency": len(title_list),
                     "ranks": all_ranks if all_ranks else [99],
                     "url": urls[0] if urls else "",
