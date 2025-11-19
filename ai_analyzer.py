@@ -659,34 +659,33 @@ class AIAnalyzer:
         self,
         raw_results: Dict[str, Dict[str, Dict[str, Any]]],
         title_info: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Dict[str, Dict[str, Dict[str, Any]]], bool, Optional[List[Dict[str, Any]]]]:
+    ) -> Tuple[Dict[str, Dict[str, Dict[str, Any]]], bool]:
         """
         将基于标题的数据结构转换为基于事件的数据结构
 
         输入: raw_results = {platform_id: {title: {ranks, url, ...}}}
         输出: event_results = {platform_id: {event_id: {event_title, articles, frequency, importance, ...}}}
-        返回: (event_results, has_ai_scores, enriched_events)
-               enriched_events 用于 AI 分析区域展示，降级模式时为 None
+        返回: (event_results, has_ai_scores)
         """
         if not raw_results:
-            return {}, False, None
+            return {}, False
 
         # 准备 AI payload
         payload = self.prepare_ai_payload(raw_results, title_info)
         if not payload:
-            return self._fallback_title_clustering(raw_results, title_info), False, None  # 降级：返回原始数据
+            return self._fallback_title_clustering(raw_results, title_info), False  # 降级：返回原始数据
 
         # 检查是否启用 AI
         if not self.ollama_client.is_available():
             print("⚠️  AI 不可用，使用标题归一化降级模式")
-            return self._fallback_title_clustering(raw_results, title_info), False, None
+            return self._fallback_title_clustering(raw_results, title_info), False
 
         # 执行 AI 聚类
         try:
             events = self.cluster_events(payload)
             if not events:
                 print("⚠️  AI 聚类返回空结果，使用降级模式")
-                return self._fallback_title_clustering(raw_results, title_info), False, None
+                return self._fallback_title_clustering(raw_results, title_info), False
 
             # 为每个事件添加分类、评分等
             enriched_events = []
@@ -703,11 +702,11 @@ class AIAnalyzer:
 
             # 转换为新的数据结构
             event_results = self._transform_events_to_dict(enriched_events, title_info)
-            return event_results, True, enriched_events
+            return event_results, True
 
         except Exception as e:
             print(f"❌ AI 聚类失败: {e}，使用降级模式")
-            return self._fallback_title_clustering(raw_results, title_info), False, None
+            return self._fallback_title_clustering(raw_results, title_info), False
 
     def _transform_events_to_dict(
         self,

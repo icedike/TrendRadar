@@ -416,20 +416,33 @@ for ai_key in ["importance", "confidence", "has_ai_score", "articles",
 
 **Result:** Theme/sentiment/summary now properly preserved and displayed in HTML reports
 
-### ✅ Fix 2: Eliminated Redundant AI Analysis
-**Files:**
-- `ai_analyzer.py:658-706` - Modified return type
-- `main.py:5043-5062` and `main.py:5100-5119` - Updated call sites
+### ℹ️ Issue 2 Clarification: Not Actually Redundant
 
-**Changes:**
-1. `cluster_and_transform_data()` now returns `enriched_events` as third value
-2. Removed redundant `_run_ai_pipeline()` calls
-3. Directly construct `ai_analysis` from `enriched_events`
+**Initial Analysis Error:**
+Originally identified as "redundant AI analysis" due to two separate calls:
+1. `cluster_and_transform_data()` at line 5044/5096
+2. `_run_ai_pipeline()` → `analyze()` at line 5057/5109
 
-**Result:**
-- AI analysis runs only once (in `cluster_and_transform_data`)
-- No duplicate LLM calls
-- Performance improved, reduced API usage
+**Actual Design Intent:**
+These serve **different purposes**:
+
+1. **`cluster_and_transform_data()`** - Data transformation pipeline
+   - Converts title-based data to event-based structure
+   - Provides enriched data for main news ranking
+   - **No caching mechanism**
+
+2. **`analyze()` via `_run_ai_pipeline()`** - AI analysis report pipeline
+   - Generates formatted report for "AI 热点分析" section in HTML
+   - **Has caching mechanism** (ai_analyzer.py:265-269)
+   - Returns richer format with version, model, sources, payload_hash
+   - If payload identical, cache hit prevents duplicate LLM calls
+
+**Why This Is Not Redundant:**
+- When payload is the same, `analyze()` returns cached results instantly
+- `analyze()` produces different output format via `_build_result()` (line 284)
+- Separates concerns: data transformation vs. analysis reporting
+
+**Conclusion:** Issue 2 was a misunderstanding of the architecture. The design is intentional and efficient due to caching.
 
 ### 📊 Updated Implementation Status
 
@@ -441,4 +454,4 @@ for ai_key in ["importance", "confidence", "has_ai_score", "articles",
 - HTML Display: 100% ✅ (all AI fields preserved)
 - **Overall: 100%** ✅
 
-**All critical issues resolved.**
+**Critical issue resolved: Only Issue 1 required fixing.**
