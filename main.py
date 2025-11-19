@@ -1448,21 +1448,26 @@ def count_word_frequency(
                     new_titles_for_source = new_titles[source_id]
                     is_new = title in new_titles_for_source
 
-                word_stats[group_key]["titles"][source_id].append(
-                    {
-                        "title": title,
-                        "source_name": source_name,
-                        "first_time": first_time,
-                        "last_time": last_time,
-                        "time_display": time_display,
-                        "count": count_info,
-                        "ranks": ranks,
-                        "rank_threshold": rank_threshold,
-                        "url": url,
-                        "mobileUrl": mobile_url,
-                        "is_new": is_new,
-                    }
-                )
+                entry = {
+                    "title": title,
+                    "source_name": source_name,
+                    "first_time": first_time,
+                    "last_time": last_time,
+                    "time_display": time_display,
+                    "count": count_info,
+                    "ranks": ranks,
+                    "rank_threshold": rank_threshold,
+                    "url": url,
+                    "mobileUrl": mobile_url,
+                    "is_new": is_new,
+                }
+
+                # 保留 AI 相关字段，供后续权重计算和展示使用
+                for ai_key in ["importance", "confidence", "has_ai_score", "articles"]:
+                    if ai_key in title_data:
+                        entry[ai_key] = title_data[ai_key]
+
+                word_stats[group_key]["titles"][source_id].append(entry)
 
                 if source_id not in processed_titles:
                     processed_titles[source_id] = {}
@@ -5030,6 +5035,8 @@ class NewsAnalyzer:
                     f"current模式：使用过滤后的历史数据，包含平台：{list(all_results.keys())}"
                 )
 
+                raw_results = all_results
+
                 # AI 数据转换：将标题字典转换为事件字典
                 if self.ai_enabled and self.ai_analyzer:
                     print("🔄 使用 AI 进行事件聚类和数据转换...")
@@ -5045,7 +5052,7 @@ class NewsAnalyzer:
                 else:
                     print("ℹ️  AI 功能未启用，使用原始标题统计")
 
-                ai_analysis = self._run_ai_pipeline(all_results, historical_title_info)
+                ai_analysis = self._run_ai_pipeline(raw_results, historical_title_info)
                 stats, html_file = self._run_analysis_pipeline(
                     all_results,
                     self.report_mode,
@@ -5080,6 +5087,8 @@ class NewsAnalyzer:
         else:
             title_info = self._prepare_current_title_info(results, time_info)
 
+            raw_results = results
+
             # AI 数据转换：将标题字典转换为事件字典
             if self.ai_enabled and self.ai_analyzer:
                 print("🔄 使用 AI 进行事件聚类和数据转换...")
@@ -5095,7 +5104,7 @@ class NewsAnalyzer:
             else:
                 print("ℹ️  AI 功能未启用，使用原始标题统计")
 
-            ai_analysis = self._run_ai_pipeline(results, title_info)
+            ai_analysis = self._run_ai_pipeline(raw_results, title_info)
             stats, html_file = self._run_analysis_pipeline(
                 results,
                 self.report_mode,
