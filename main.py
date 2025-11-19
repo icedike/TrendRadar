@@ -1,6 +1,7 @@
 # coding=utf-8
 
 import json
+import math
 import os
 import random
 import re
@@ -1118,6 +1119,26 @@ def calculate_news_weight(
         # AI 增强模式
         importance = title_data.get("importance", 5.0)  # 1-10
         confidence = title_data.get("confidence", 0.5)  # 0-1
+
+        # 验证并修正 importance 值（防止缓存损坏）
+        try:
+            importance = float(importance)
+            if not math.isfinite(importance):
+                importance = 5.0
+            else:
+                importance = max(1.0, min(10.0, importance))
+        except (TypeError, ValueError):
+            importance = 5.0
+
+        # 验证并修正 confidence 值（防止缓存损坏）
+        try:
+            confidence = float(confidence)
+            if not math.isfinite(confidence):
+                confidence = 0.5
+            else:
+                confidence = max(0.0, min(1.0, confidence))
+        except (TypeError, ValueError):
+            confidence = 0.5
 
         # 归一化到 0-100 范围
         importance_weight = importance * 10  # 1-10 → 10-100
