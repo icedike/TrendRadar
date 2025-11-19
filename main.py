@@ -1459,7 +1459,8 @@ def count_word_frequency(
 
                 # 保留 AI 相关字段，供后续权重计算和展示使用
                 # 注意：articles 列表包含完整的文章信息，用于在 HTML 报告中展示详情
-                for ai_key in ["importance", "confidence", "has_ai_score", "articles"]:
+                for ai_key in ["importance", "confidence", "has_ai_score", "articles",
+                               "theme", "subcategory", "sentiment", "summary"]:
                     if ai_key in title_data:
                         entry[ai_key] = title_data[ai_key]
 
