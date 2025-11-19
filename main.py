@@ -169,6 +169,15 @@ def load_config():
             "RANK_WEIGHT": config_data["weight"]["rank_weight"],
             "FREQUENCY_WEIGHT": config_data["weight"]["frequency_weight"],
             "HOTNESS_WEIGHT": config_data["weight"]["hotness_weight"],
+            # AI 增强权重配置
+            "ai_enhanced": config_data["weight"].get("ai_enhanced", {
+                "enabled": False,
+                "rank_weight": 0.3,
+                "frequency_weight": 0.25,
+                "hotness_weight": 0.05,
+                "importance_weight": 0.3,
+                "confidence_weight": 0.1,
+            }),
         },
         "PLATFORMS": config_data["platforms"],
         "RSS_FEEDS": rss_feeds,
@@ -1074,23 +1083,26 @@ def detect_latest_new_titles(current_platform_ids: Optional[List[str]] = None) -
 def calculate_news_weight(
     title_data: Dict, rank_threshold: int = CONFIG["RANK_THRESHOLD"]
 ) -> float:
-    """计算新闻权重，用于排序"""
+    """计算新闻权重，用于排序（支持AI增强模式）"""
     ranks = title_data.get("ranks", [])
     if not ranks:
         return 0.0
 
-    count = title_data.get("count", len(ranks))
+    # 检查是否有AI评分
+    has_ai_score = title_data.get("has_ai_score", False)
     weight_config = CONFIG["WEIGHT_CONFIG"]
 
+    # 计算基础权重
     # 排名权重：Σ(11 - min(rank, 10)) / 出现次数
     rank_scores = []
     for rank in ranks:
         score = 11 - min(rank, 10)
         rank_scores.append(score)
-
     rank_weight = sum(rank_scores) / len(ranks) if ranks else 0
 
     # 频次权重：min(出现次数, 10) × 10
+    # 对于事件数据，frequency 已经在 cluster_and_transform_data 中计算好了
+    count = title_data.get("frequency", title_data.get("count", len(ranks)))
     frequency_weight = min(count, 10) * 10
 
     # 热度加成：高排名次数 / 总出现次数 × 100
@@ -1098,11 +1110,33 @@ def calculate_news_weight(
     hotness_ratio = high_rank_count / len(ranks) if ranks else 0
     hotness_weight = hotness_ratio * 100
 
-    total_weight = (
-        rank_weight * weight_config["RANK_WEIGHT"]
-        + frequency_weight * weight_config["FREQUENCY_WEIGHT"]
-        + hotness_weight * weight_config["HOTNESS_WEIGHT"]
-    )
+    # 判断使用哪种评分模式
+    ai_enhanced_config = weight_config.get("ai_enhanced", {})
+    use_ai_mode = has_ai_score and ai_enhanced_config.get("enabled", False)
+
+    if use_ai_mode:
+        # AI 增强模式
+        importance = title_data.get("importance", 5.0)  # 1-10
+        confidence = title_data.get("confidence", 0.5)  # 0-1
+
+        # 归一化到 0-100 范围
+        importance_weight = importance * 10  # 1-10 → 10-100
+        confidence_weight = confidence * 100  # 0-1 → 0-100
+
+        total_weight = (
+            rank_weight * ai_enhanced_config["rank_weight"]
+            + frequency_weight * ai_enhanced_config["frequency_weight"]
+            + hotness_weight * ai_enhanced_config["hotness_weight"]
+            + importance_weight * ai_enhanced_config["importance_weight"]
+            + confidence_weight * ai_enhanced_config["confidence_weight"]
+        )
+    else:
+        # 传统模式（兼容无AI场景）
+        total_weight = (
+            rank_weight * weight_config["RANK_WEIGHT"]
+            + frequency_weight * weight_config["FREQUENCY_WEIGHT"]
+            + hotness_weight * weight_config["HOTNESS_WEIGHT"]
+        )
 
     return total_weight
 
@@ -1292,8 +1326,15 @@ def count_word_frequency(
         if source_id not in processed_titles:
             processed_titles[source_id] = {}
 
-        for title, title_data in titles_data.items():
-            if title in processed_titles.get(source_id, {}):
+        for key, item_data in titles_data.items():
+            # 兼容两种数据结构：
+            # 1. 事件数据（经过AI聚类）：key=event_id, item_data包含event_title
+            # 2. 传统标题数据：key=title, item_data直接是标题数据
+            is_event_data = "event_title" in item_data
+            title = item_data.get("event_title", key) if is_event_data else key
+            title_data = item_data
+
+            if key in processed_titles.get(source_id, {}):
                 continue
 
             # 使用统一的匹配逻辑
@@ -1402,25 +1443,31 @@ def count_word_frequency(
                     new_titles_for_source = new_titles[source_id]
                     is_new = title in new_titles_for_source
 
-                word_stats[group_key]["titles"][source_id].append(
-                    {
-                        "title": title,
-                        "source_name": source_name,
-                        "first_time": first_time,
-                        "last_time": last_time,
-                        "time_display": time_display,
-                        "count": count_info,
-                        "ranks": ranks,
-                        "rank_threshold": rank_threshold,
-                        "url": url,
-                        "mobileUrl": mobile_url,
-                        "is_new": is_new,
-                    }
-                )
+                entry = {
+                    "title": title,
+                    "source_name": source_name,
+                    "first_time": first_time,
+                    "last_time": last_time,
+                    "time_display": time_display,
+                    "count": count_info,
+                    "ranks": ranks,
+                    "rank_threshold": rank_threshold,
+                    "url": url,
+                    "mobileUrl": mobile_url,
+                    "is_new": is_new,
+                }
+
+                # 保留 AI 相关字段，供后续权重计算和展示使用
+                # 注意：articles 列表包含完整的文章信息，用于在 HTML 报告中展示详情
+                for ai_key in ["importance", "confidence", "has_ai_score", "articles"]:
+                    if ai_key in title_data:
+                        entry[ai_key] = title_data[ai_key]
+
+                word_stats[group_key]["titles"][source_id].append(entry)
 
                 if source_id not in processed_titles:
                     processed_titles[source_id] = {}
-                processed_titles[source_id][title] = True
+                processed_titles[source_id][key] = True
 
                 break
 
@@ -1605,17 +1652,31 @@ def prepare_report_data(
     }
 
 
+def is_event_data(title_data: Dict) -> bool:
+    """检测数据是否为事件数据（而非单纯的标题数据）"""
+    return title_data.get("has_ai_score", False) or bool(title_data.get("event_title"))
+
+
 def format_title_for_platform(
     platform: str, title_data: Dict, show_source: bool = True
 ) -> str:
-    """统一的标题格式化方法"""
+    """统一的标题格式化方法（支持AI评分显示）"""
     rank_display = format_rank_display(
         title_data["ranks"], title_data["rank_threshold"], platform
     )
 
     link_url = title_data["mobile_url"] or title_data["url"]
-
     cleaned_title = clean_title(title_data["title"])
+
+    # 检测是否是事件数据
+    is_event = is_event_data(title_data)
+    count_info = title_data.get("frequency", title_data.get("count", 1))
+
+    # AI评分信息
+    importance = title_data.get("importance", 0)
+    confidence = title_data.get("confidence", 0)
+    theme = title_data.get("theme", "")
+    subcategory = title_data.get("subcategory", "")
 
     if platform == "feishu":
         if link_url:
@@ -1634,8 +1695,24 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" <font color='grey'>- {title_data['time_display']}</font>"
-        if title_data["count"] > 1:
-            result += f" <font color='green'>({title_data['count']}次)</font>"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" <font color='green'>({count_info}{count_label})</font>"
+
+        # 显示AI评分
+        if importance is not None or confidence is not None or theme:
+            ai_info = []
+            if importance is not None:
+                color = 'red' if importance >= 7 else 'orange'
+                ai_info.append(f"<font color='{color}'>重要{importance:.1f}</font>")
+            if confidence is not None:
+                ai_info.append(f"<font color='blue'>信心{int(confidence * 100)}%</font>")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(f"<font color='purple'>{theme_text}</font>")
+            result += f" <font color='grey'>|</font> {' '.join(ai_info)}"
 
         return result
 
@@ -1656,8 +1733,21 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" - {title_data['time_display']}"
-        if title_data["count"] > 1:
-            result += f" ({title_data['count']}次)"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" ({count_info}{count_label})"
+
+        # 显示AI评分（简化版）
+        if importance is not None or theme:
+            ai_info = []
+            if importance is not None:
+                ai_info.append(f"重要{importance:.1f}")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(theme_text)
+            result += f" | {' '.join(ai_info)}"
 
         return result
 
@@ -1678,8 +1768,21 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" - {title_data['time_display']}"
-        if title_data["count"] > 1:
-            result += f" ({title_data['count']}次)"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" ({count_info}{count_label})"
+
+        # 显示AI评分（简化版）
+        if importance is not None or theme:
+            ai_info = []
+            if importance is not None:
+                ai_info.append(f"重要{importance:.1f}")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(theme_text)
+            result += f" | {' '.join(ai_info)}"
 
         return result
 
@@ -1700,8 +1803,23 @@ def format_title_for_platform(
             result += f" {rank_display}"
         if title_data["time_display"]:
             result += f" <code>- {title_data['time_display']}</code>"
-        if title_data["count"] > 1:
-            result += f" <code>({title_data['count']}次)</code>"
+
+        # 显示频率/文章数
+        if count_info > 1:
+            count_label = "篇" if is_event else "次"
+            result += f" <code>({count_info}{count_label})</code>"
+
+        # 显示AI评分
+        if importance or confidence or theme:
+            ai_info = []
+            if importance:
+                ai_info.append(f"重要{importance:.1f}/10")
+            if confidence:
+                ai_info.append(f"信心{int(confidence * 100)}%")
+            if theme:
+                theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                ai_info.append(theme_text)
+            result += f" <code>| {' '.join(ai_info)}</code>"
 
         return result
 
@@ -2114,14 +2232,83 @@ def render_html_content(
                 font-size: 11px;
                 font-weight: 500;
             }
-            
+
             .news-title {
                 font-size: 15px;
                 line-height: 1.4;
                 color: #1a1a1a;
                 margin: 0;
             }
-            
+
+            /* AI 评分样式 */
+            .ai-scores {
+                display: flex;
+                gap: 6px;
+                margin-top: 6px;
+                flex-wrap: wrap;
+            }
+
+            .ai-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 3px;
+                padding: 3px 8px;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+
+            .ai-badge.importance { background: #fef3c7; color: #92400e; }
+            .ai-badge.importance.high { background: #fecaca; color: #991b1b; }
+            .ai-badge.confidence { background: #dbeafe; color: #1e40af; }
+            .ai-badge.theme { background: #e0e7ff; color: #3730a3; }
+
+            /* 事件文章列表样式 */
+            .event-articles {
+                margin-top: 8px;
+                padding-top: 8px;
+                border-top: 1px solid #f3f4f6;
+            }
+
+            .event-articles summary {
+                cursor: pointer;
+                font-size: 12px;
+                color: #6b7280;
+                user-select: none;
+                list-style: none;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-weight: 500;
+            }
+
+            .event-articles summary::-webkit-details-marker { display: none; }
+            .event-articles summary::before {
+                content: '▶';
+                font-size: 9px;
+                transition: transform 0.2s;
+                display: inline-block;
+            }
+            .event-articles[open] summary::before { transform: rotate(90deg); }
+
+            .article-list {
+                margin-top: 8px;
+                padding-left: 4px;
+            }
+
+            .article-item {
+                font-size: 12px;
+                color: #6b7280;
+                margin: 6px 0;
+                padding-left: 12px;
+                border-left: 2px solid #e5e7eb;
+                line-height: 1.6;
+            }
+
+            .article-item a { color: #3b82f6; text-decoration: none; }
+            .article-item a:hover { text-decoration: underline; }
+            .article-source { color: #9ca3af; font-weight: 500; }
+
             .news-link {
                 color: #2563eb;
                 text-decoration: none;
@@ -2493,10 +2680,13 @@ def render_html_content(
                         f'<span class="time-info">{html_escape(simplified_time)}</span>'
                     )
 
-                # 处理出现次数
-                count_info = title_data.get("count", 1)
+                # 处理出现次数/频率
+                count_info = title_data.get("frequency", title_data.get("count", 1))
+                is_event = is_event_data(title_data)
+
                 if count_info > 1:
-                    html += f'<span class="count-info">{count_info}次</span>'
+                    count_label = "篇文章" if is_event else "次"
+                    html += f'<span class="count-info">{count_info}{count_label}</span>'
 
                 html += """
                             </div>
@@ -2513,7 +2703,66 @@ def render_html_content(
                     html += escaped_title
 
                 html += """
-                            </div>
+                            </div>"""
+
+                # 添加AI评分信息
+                if title_data.get("has_ai_score", False):
+                    importance = title_data.get("importance")
+                    confidence = title_data.get("confidence")
+                    theme = title_data.get("theme", "")
+                    subcategory = title_data.get("subcategory", "")
+
+                    if importance is not None or confidence is not None or theme:
+                        html += """
+                            <div class="ai-scores">"""
+
+                        if importance is not None:
+                            importance_class = "high" if importance >= 7 else ""
+                            html += f'<span class="ai-badge importance {importance_class}">重要性 {importance:.1f}/10</span>'
+
+                        if confidence is not None:
+                            html += f'<span class="ai-badge confidence">置信度 {int(confidence * 100)}%</span>'
+
+                        if theme:
+                            theme_text = f"{theme}/{subcategory}" if subcategory else theme
+                            html += f'<span class="ai-badge theme">{html_escape(theme_text)}</span>'
+
+                        html += """
+                            </div>"""
+
+                # 添加事件文章列表（如果是事件数据且包含多篇文章）
+                articles = title_data.get("articles", [])
+                if is_event and articles and len(articles) > 1:
+                    html += f"""
+                            <details class="event-articles">
+                                <summary>查看 {len(articles)} 篇原始文章</summary>
+                                <div class="article-list">"""
+
+                    for article in articles:
+                        article_title = article.get("title", "")
+                        article_url = article.get("url", "")
+                        platform_name = article.get("platform_name", "")
+
+                        if article_title:
+                            escaped_article_title = html_escape(article_title)
+                            html += '<div class="article-item">'
+
+                            if platform_name:
+                                html += f'<span class="article-source">[{html_escape(platform_name)}]</span> '
+
+                            if article_url:
+                                escaped_article_url = html_escape(article_url)
+                                html += f'<a href="{escaped_article_url}" target="_blank">{escaped_article_title}</a>'
+                            else:
+                                html += escaped_article_title
+
+                            html += '</div>'
+
+                    html += """
+                                </div>
+                            </details>"""
+
+                html += """
                         </div>
                     </div>"""
 
@@ -4787,7 +5036,24 @@ class NewsAnalyzer:
                     f"current模式：使用过滤后的历史数据，包含平台：{list(all_results.keys())}"
                 )
 
-                ai_analysis = self._run_ai_pipeline(all_results, historical_title_info)
+                raw_results = all_results
+
+                # AI 数据转换：将标题字典转换为事件字典
+                if self.ai_enabled and self.ai_analyzer:
+                    print("🔄 使用 AI 进行事件聚类和数据转换...")
+                    event_based_results, has_ai_scores = self.ai_analyzer.cluster_and_transform_data(
+                        all_results, historical_title_info
+                    )
+                    if has_ai_scores:
+                        print(f"✅ AI 聚类完成，识别出 {sum(len(events) for events in event_based_results.values())} 个事件")
+                        all_results = event_based_results
+                    else:
+                        print("⚠️  AI 不可用，使用标题归一化降级模式")
+                        all_results = event_based_results  # 仍然使用降级聚类结果
+                else:
+                    print("ℹ️  AI 功能未启用，使用原始标题统计")
+
+                ai_analysis = self._run_ai_pipeline(raw_results, historical_title_info)
                 stats, html_file = self._run_analysis_pipeline(
                     all_results,
                     self.report_mode,
@@ -4821,7 +5087,25 @@ class NewsAnalyzer:
                 raise RuntimeError("数据一致性检查失败：保存后立即读取失败")
         else:
             title_info = self._prepare_current_title_info(results, time_info)
-            ai_analysis = self._run_ai_pipeline(results, title_info)
+
+            raw_results = results
+
+            # AI 数据转换：将标题字典转换为事件字典
+            if self.ai_enabled and self.ai_analyzer:
+                print("🔄 使用 AI 进行事件聚类和数据转换...")
+                event_based_results, has_ai_scores = self.ai_analyzer.cluster_and_transform_data(
+                    results, title_info
+                )
+                if has_ai_scores:
+                    print(f"✅ AI 聚类完成，识别出 {sum(len(events) for events in event_based_results.values())} 个事件")
+                    results = event_based_results
+                else:
+                    print("⚠️  AI 不可用，使用标题归一化降级模式")
+                    results = event_based_results  # 仍然使用降级聚类结果
+            else:
+                print("ℹ️  AI 功能未启用，使用原始标题统计")
+
+            ai_analysis = self._run_ai_pipeline(raw_results, title_info)
             stats, html_file = self._run_analysis_pipeline(
                 results,
                 self.report_mode,

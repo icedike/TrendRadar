@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import orjson
 import pytz
@@ -654,6 +654,212 @@ class AIAnalyzer:
 
     def _normalize(self, text: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+    def cluster_and_transform_data(
+        self,
+        raw_results: Dict[str, Dict[str, Dict[str, Any]]],
+        title_info: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Dict[str, Dict[str, Any]]], bool]:
+        """
+        将基于标题的数据结构转换为基于事件的数据结构
+
+        输入: raw_results = {platform_id: {title: {ranks, url, ...}}}
+        输出: event_results = {platform_id: {event_id: {event_title, articles, frequency, importance, ...}}}
+        返回: (event_results, has_ai_scores)
+        """
+        if not raw_results:
+            return {}, False
+
+        # 准备 AI payload
+        payload = self.prepare_ai_payload(raw_results, title_info)
+        if not payload:
+            return self._fallback_title_clustering(raw_results, title_info), False  # 降级：返回原始数据
+
+        # 检查是否启用 AI
+        if not self.ollama_client.is_available():
+            print("⚠️  AI 不可用，使用标题归一化降级模式")
+            return self._fallback_title_clustering(raw_results, title_info), False
+
+        # 执行 AI 聚类
+        try:
+            events = self.cluster_events(payload)
+            if not events:
+                print("⚠️  AI 聚类返回空结果，使用降级模式")
+                return self._fallback_title_clustering(raw_results, title_info), False
+
+            # 为每个事件添加分类、评分等
+            enriched_events = []
+            for event in events:
+                classification = self.classify_theme(event)
+                importance = self.score_importance(event)
+                sentiment = self.analyze_sentiment(event)
+                summary = self.generate_summary(event)
+                event.update(classification)
+                event.update(importance)
+                event.update(sentiment)
+                event["summary"] = summary
+                enriched_events.append(event)
+
+            # 转换为新的数据结构
+            event_results = self._transform_events_to_dict(enriched_events, title_info)
+            return event_results, True
+
+        except Exception as e:
+            print(f"❌ AI 聚类失败: {e}，使用降级模式")
+            return self._fallback_title_clustering(raw_results, title_info), False
+
+    def _transform_events_to_dict(
+        self,
+        events: List[Dict[str, Any]],
+        title_info: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """
+        将事件列表转换为字典结构
+        {platform_id: {event_id: event_data}}
+        """
+        result: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+        for event in events:
+            event_id = event.get("event_id", "unknown")
+            articles = event.get("articles", [])
+
+            if not articles:
+                continue
+
+            # 按平台分组文章
+            platform_articles: Dict[str, List[Dict]] = {}
+            for article in articles:
+                platform_id = article.get("platform_id", "unknown")
+                if platform_id not in platform_articles:
+                    platform_articles[platform_id] = []
+                platform_articles[platform_id].append(article)
+
+            # 为每个平台创建事件条目
+            for platform_id, plat_articles in platform_articles.items():
+                if platform_id not in result:
+                    result[platform_id] = {}
+
+                # 收集所有排名
+                all_ranks = []
+                first_time = None
+                last_time = None
+                urls = []
+
+                for article in plat_articles:
+                    ranks = article.get("ranks", [])
+                    all_ranks.extend(ranks)
+
+                    # URL
+                    url = article.get("url", "")
+                    if url and url not in urls:
+                        urls.append(url)
+
+                    # 时间信息
+                    timestamp = article.get("timestamp", "")
+                    if timestamp:
+                        if first_time is None or timestamp < first_time:
+                            first_time = timestamp
+                        if last_time is None or timestamp > last_time:
+                            last_time = timestamp
+
+                # 创建事件数据
+                event_data = {
+                    "event_title": event.get("title", ""),
+                    "articles": plat_articles,  # 包含原始文章列表
+                    "frequency": len(plat_articles),  # 事件频率 = 文章数
+                    "ranks": all_ranks if all_ranks else [99],
+                    "url": urls[0] if urls else "",
+                    "urls": urls,  # 所有URL
+                    "mobileUrl": plat_articles[0].get("mobile_url", "") if plat_articles else "",
+                    "first_time": first_time or "",
+                    "last_time": last_time or "",
+                    "importance": event.get("importance", 5.0),
+                    "confidence": event.get("confidence", 0.5),
+                    "theme": event.get("theme", "general"),
+                    "subcategory": event.get("subcategory", ""),
+                    "sentiment": event.get("sentiment", "neutral"),
+                    "summary": event.get("summary", ""),
+                    "has_ai_score": True,
+                }
+
+                result[platform_id][event_id] = event_data
+
+        return result
+
+    def _fallback_title_clustering(
+        self,
+        raw_results: Dict[str, Dict[str, Dict[str, Any]]],
+        title_info: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """
+        降级模式：基于标题归一化的简单聚类
+        将相似标题（去除标点、大小写后相同）归为一个事件
+        
+        注意：此函数要求 raw_results 为标题字典格式 {platform_id: {title: {data}}}
+        而不是事件字典格式。title_info 也应为标题索引的时间信息。
+        """
+        result: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+        for platform_id, titles_data in raw_results.items():
+            result[platform_id] = {}
+
+            # 按归一化标题分组
+            normalized_groups: Dict[str, List[Tuple[str, Dict]]] = {}
+            for title, data in titles_data.items():
+                normalized = self._normalize(title)
+                if normalized not in normalized_groups:
+                    normalized_groups[normalized] = []
+                normalized_groups[normalized].append((title, data))
+
+            # 为每组创建事件
+            for group_idx, (normalized, title_list) in enumerate(normalized_groups.items()):
+                # 使用第一个标题作为事件标题
+                first_title = title_list[0][0]
+                event_id = f"event_{platform_id}_{group_idx}_{normalized[:8]}"
+
+                # 合并所有数据
+                all_ranks = []
+                urls = []
+                for title, data in title_list:
+                    ranks = data.get("ranks", [])
+                    all_ranks.extend(ranks)
+                    url = data.get("url", "")
+                    if url and url not in urls:
+                        urls.append(url)
+
+                # 获取时间信息
+                first_time = ""
+                last_time = ""
+                if title_info and platform_id in title_info:
+                    for title, _ in title_list:
+                        if title in title_info[platform_id]:
+                            info = title_info[platform_id][title]
+                            ft = info.get("first_time", "")
+                            lt = info.get("last_time", "")
+                            if ft:
+                                if not first_time or ft < first_time:
+                                    first_time = ft
+                            if lt:
+                                if not last_time or lt > last_time:
+                                    last_time = lt
+
+                # 创建简化的事件数据（没有AI评分）
+                event_data = {
+                    "event_title": first_title,
+                    "articles": [{"title": t, "data": d} for t, d in title_list],
+                    "frequency": len(title_list),
+                    "ranks": all_ranks if all_ranks else [99],
+                    "url": urls[0] if urls else "",
+                    "urls": urls,
+                    "mobileUrl": title_list[0][1].get("mobileUrl", ""),
+                    "first_time": first_time,
+                    "last_time": last_time,
+                    "has_ai_score": False,  # 标记为降级模式
+                }
+
+                result[platform_id][event_id] = event_data
+
+        return result
 
 
 __all__ = ["AIAnalyzer", "AIResultRepository", "AIAnalyzerConfig", "OllamaClient", "OllamaClientError"]
